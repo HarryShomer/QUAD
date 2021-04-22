@@ -1,3 +1,6 @@
+"""
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/data_loaders/data_manager.py
+"""
 from functools import partial
 from typing import List, Union, Dict, Callable
 import numpy as np

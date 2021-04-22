@@ -1,4 +1,7 @@
-""" Some things needed across the board"""
+"""
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/utils/utils.py
+"""
+
 import torch
 import pickle
 import numpy as np

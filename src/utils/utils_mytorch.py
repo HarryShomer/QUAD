@@ -1,3 +1,7 @@
+"""
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/utils/utils_mytorch.py
+"""
+
 from typing import List, Dict, Union
 from pathlib import Path
 from collections import namedtuple

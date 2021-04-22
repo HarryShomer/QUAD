@@ -1,3 +1,7 @@
+"""
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/loops/loops.py
+"""
+
 from tqdm.autonotebook import tqdm
 from typing import Callable
 

@@ -1,3 +1,7 @@
+"""
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/loops/evaluation.py
+"""
+
 from functools import partial
 from tqdm.autonotebook import tqdm
 import types

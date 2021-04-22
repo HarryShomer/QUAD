@@ -88,7 +88,10 @@ class Transformer(nn.Module):
 
         encoder_layers = TransformerEncoderLayer(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
         self.encoder = TransformerEncoder(encoder_layers, params['MODEL']['T_LAYERS'])
-        self.position_embeddings = nn.Embedding(params['MAX_QPAIRS'], self.emb_dim)
+
+
+        # TODO: Fix!!!!
+        self.position_embeddings = nn.Embedding(params['MAX_QPAIRS'] - 1, self.emb_dim)
 
         self.fc = torch.nn.Linear(self.emb_dim, self.emb_dim)
 
@@ -162,7 +165,11 @@ class Transformer(nn.Module):
         # mask which shows which entities were padded - for future purposes, True means to mask (in transformer)
         # https://github.com/pytorch/pytorch/blob/master/torch/nn/functional.py : 3770
         # so we first initialize with False
-        mask = torch.zeros((ent_emb_trip.shape[0], quals.shape[1] + 3)).bool().to(self.device)  # 3 for 2 entities and 1 relation
+
+
+        # TODO: Fix!!!
+        #mask = torch.zeros((ent_emb_trip.shape[0], quals.shape[1] + 3)).bool().to(self.device)  # 3 for 2 entities and 1 relation
+        mask = torch.zeros((ent_emb_trip.shape[0], quals.shape[1] + 2)).bool().to(self.device)  # 3 for 2 entities and 1 relation
         
         # Put True where qual entities and relations are actually padding index 0.
         mask[:, 3:] = quals == 0

@@ -1,5 +1,5 @@
 """
-    File which enables easily loading any dataset we need
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/data_loaders/load.py
 """
 import json
 from tqdm import tqdm
@@ -304,17 +304,17 @@ def load_wd50k_statements(maxlen: int) -> Dict:
     for st in train_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in valid_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in test_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     train, valid, test = _pad_statements_(train, maxlen), _pad_statements_(valid,
@@ -448,17 +448,17 @@ def load_wd50k_33_statements(maxlen: int) -> Dict:
     for st in train_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in valid_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in test_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     train, valid, test = _pad_statements_(train, maxlen), _pad_statements_(valid,
@@ -592,17 +592,17 @@ def load_wd50k_66_statements(maxlen: int) -> Dict:
     for st in train_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in valid_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in test_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     train, valid, test = _pad_statements_(train, maxlen), _pad_statements_(valid,
@@ -638,17 +638,17 @@ def load_wd50k_100_statements(maxlen: int) -> Dict:
     for st in train_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in valid_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in test_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     train, valid, test = _pad_statements_(train, maxlen), _pad_statements_(valid,
@@ -764,17 +764,17 @@ def load_wd50k_100_33_statements(maxlen: int) -> Dict:
     for st in train_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in valid_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in test_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     train, valid, test = _pad_statements_(train, maxlen), _pad_statements_(valid,
@@ -890,17 +890,17 @@ def load_wd50k_100_66_statements(maxlen: int) -> Dict:
     for st in train_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in valid_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in test_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     train, valid, test = _pad_statements_(train, maxlen), _pad_statements_(valid,
@@ -1147,17 +1147,17 @@ def load_wikipeople_statements(maxlen=17, filter_literals=True) -> Dict:
     for st in conv_trn:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in conv_val:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in conv_tst:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     train, valid, test = _pad_statements_(train, maxlen), _pad_statements_(valid,
@@ -1299,19 +1299,19 @@ def load_jf17k_statements(maxlen=15) -> Dict:
         for st in tr_st:
             id_st = []
             for i, uri in enumerate(st):
-                id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+                id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
             train.append(id_st)
 
         for st in val_st:
             id_st = []
             for i, uri in enumerate(st):
-                id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+                id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
             valid.append(id_st)
 
         for st in test_statements:
             id_st = []
             for i, uri in enumerate(st):
-                id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+                id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
             test.append(id_st)
 
         train, valid, test = _pad_statements_(train, maxlen), \

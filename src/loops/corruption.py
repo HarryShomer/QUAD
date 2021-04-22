@@ -1,3 +1,7 @@
+"""
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/loops/corruption.py
+"""
+
 import pickle
 from typing import List
 import numpy as np

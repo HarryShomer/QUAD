@@ -1,6 +1,9 @@
+"""
+Original source can be found here -> https://github.com/migalkin/StarE/blob/master/utils/utils_gcn.py
+"""
+
 import logging
 import logging.config
-
 import inspect
 import numpy as np
 
@@ -12,6 +15,9 @@ from torch.nn.init import xavier_normal_
 from torch_scatter import scatter_add, scatter_max
 
 np.set_printoptions(precision=4)
+
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 class MessagePassing(torch.nn.Module):

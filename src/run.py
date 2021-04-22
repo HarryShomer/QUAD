@@ -19,8 +19,6 @@ from loops.loops import training_loop_gcn
 
 from models.hyper_gcn import *
 
-
-# TODO: all needed?
 np.random.seed(42)
 random.seed(42)
 torch.manual_seed(132)
@@ -86,6 +84,9 @@ parser.add_argument("--label-smoothing", default=.1, type=float)
 parser.add_argument("--lr-decay", action='store_true', default=False)
 parser.add_argument("--early-stopping", help="Number of validation scores to wait for an increase before stopping", default=3, type=int)
 
+parser.add_argument("--ent-bases", help="Whether to use bases for entity embeddings", action='store_true', default=False)
+parser.add_argument("--rel-bases", help="Whether to use bases for relation embeddings", action='store_true', default=False)
+
 # should be false for WikiPeople and JF17K for their original data
 parser.add_argument("--cleaned-dataset", action='store_true', default=False)
 
@@ -111,6 +112,8 @@ DEFAULT_CONFIG['LR_SCHEDULER'] = cmd_args.lr_decay
 DEFAULT_CONFIG['EARLY_STOPPING'] = cmd_args.early_stopping
 DEFAULT_CONFIG['ALPHA'] = cmd_args.alpha
 DEFAULT_CONFIG['BETA'] = cmd_args.beta
+DEFAULT_CONFIG['MODEL']['ENT_BASES'] = cmd_args.ent_bases
+DEFAULT_CONFIG['MODEL']['REL_BASES'] = cmd_args.rel_bases
 DEFAULT_CONFIG['MODEL']['OPN'] = cmd_args.opn
 
 
@@ -160,7 +163,10 @@ def get_data(config):
 
 def main():
     config = DEFAULT_CONFIG.copy()
+
+    print("\nConfig\n------")
     print(config)
+    print("\n")
 
     ## Specified Dataset splits
     train_data_gcn, train_data, valid_data, test_data, ent_excluded_from_corr = get_data(config)
@@ -227,7 +233,7 @@ def main():
         "scheduler": torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None
     }
 
-    print(f"Training on {config['NUM_ENTITIES']} entities!")
+    print(f"Training on {config['NUM_ENTITIES']} entities and {config['NUM_RELATIONS']} relations!\n")
 
     traces = training_loop_gcn(**args)
 

@@ -1,3 +1,6 @@
+"""
+Original source can be found here - https://github.com/migalkin/StarE/blob/master/data_loaders/clean_datasets.py
+"""
 from pathlib import Path
 from typing import Dict
 from collections import defaultdict
@@ -49,17 +52,17 @@ def load_clean_wikipeople_statements(subtype, maxlen=17) -> Dict:
     for st in raw_trn:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in raw_val:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in raw_tst:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     if subtype == "triples":
@@ -110,19 +113,19 @@ def load_clean_jf17k_statements(subtype, maxlen=15) -> Dict:
     for st in tr_st:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
 
     for st in val_st:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
 
     for st in test_statements:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
 
@@ -183,17 +186,17 @@ def load_clean_wd50k(name, subtype, maxlen=43) -> Dict:
     for st in raw_trn:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         train.append(id_st)
     for st in raw_val:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         valid.append(id_st)
     for st in raw_tst:
         id_st = []
         for i, uri in enumerate(st):
-            id_st.append(entoid[uri] if i % 2 is 0 else prtoid[uri])
+            id_st.append(entoid[uri] if i % 2 == 0 else prtoid[uri])
         test.append(id_st)
 
     if subtype != "triples":
