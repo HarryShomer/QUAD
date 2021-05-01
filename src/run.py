@@ -73,9 +73,9 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("dataset", help="Dataset to run it on")
 parser.add_argument("--device", type=str, default='cuda')
-parser.add_argument("--epochs", help="Number of epochs to run", default=250, type=int)
+parser.add_argument("--epochs", help="Number of epochs to run", default=500, type=int)
 parser.add_argument("--batch-size", help="Batch size to use for training", default=128, type=int)
-parser.add_argument("--learning-rate", help="Learning rate to use while training", default=1e-4, type=float)
+parser.add_argument("--lr", help="Learning rate to use while training", default=1e-4, type=float)
 parser.add_argument("--dim", help="Latent dimension of entities and relations", type=int, default=200)
 parser.add_argument("--opn", help="Composition function", type=str, default="corr")
 parser.add_argument("--val-every", help="Test on validation set every n epochs", type=int, default=5)
@@ -84,8 +84,8 @@ parser.add_argument("--label-smoothing", default=.1, type=float)
 parser.add_argument("--lr-decay", action='store_true', default=False)
 parser.add_argument("--early-stopping", help="Number of validation scores to wait for an increase before stopping", default=3, type=int)
 
-parser.add_argument("--ent-bases", help="Whether to use bases for entity embeddings", action='store_true', default=False)
-parser.add_argument("--rel-bases", help="Whether to use bases for relation embeddings", action='store_true', default=False)
+# Type of embedding to use
+parser.add_argument("--emb-type", help="Choices -> ['same', 'project', base', diff']. Defaults to 'diff'", type=str, default='diff')
 
 # should be false for WikiPeople and JF17K for their original data
 parser.add_argument("--cleaned-dataset", action='store_true', default=False)
@@ -104,7 +104,7 @@ DEFAULT_CONFIG['DEVICE'] = torch.device(cmd_args.device)
 DEFAULT_CONFIG['EMBEDDING_DIM'] = cmd_args.dim
 DEFAULT_CONFIG['EPOCHS'] = cmd_args.epochs 
 DEFAULT_CONFIG['EVAL_EVERY'] = cmd_args.val_every
-DEFAULT_CONFIG['LEARNING_RATE'] = cmd_args.learning_rate
+DEFAULT_CONFIG['LEARNING_RATE'] = cmd_args.lr
 DEFAULT_CONFIG['SAVE'] = cmd_args.save
 DEFAULT_CONFIG['LABEL_SMOOTHING'] = cmd_args.label_smoothing
 DEFAULT_CONFIG['CLEANED_DATASET'] = cmd_args.cleaned_dataset
@@ -112,8 +112,7 @@ DEFAULT_CONFIG['LR_SCHEDULER'] = cmd_args.lr_decay
 DEFAULT_CONFIG['EARLY_STOPPING'] = cmd_args.early_stopping
 DEFAULT_CONFIG['ALPHA'] = cmd_args.alpha
 DEFAULT_CONFIG['BETA'] = cmd_args.beta
-DEFAULT_CONFIG['MODEL']['ENT_BASES'] = cmd_args.ent_bases
-DEFAULT_CONFIG['MODEL']['REL_BASES'] = cmd_args.rel_bases
+DEFAULT_CONFIG['MODEL']['EMB_TYPE'] = cmd_args.emb_type
 DEFAULT_CONFIG['MODEL']['OPN'] = cmd_args.opn
 
 
@@ -124,6 +123,29 @@ def get_data(config):
     """
     data = DataManager.load(config=config)()
     train_data, valid_data, test_data, n_entities, n_relations, _, _ = data.values()
+
+
+    # all_data = [train_data, valid_data, test_data]
+    
+    # main_ents = set([t[0] for d in all_data for t in d] + [t[2] for d in all_data for t in d])
+
+    # qual_ents = []
+    # for d in all_data:
+    #     for t in d:
+    #         qual_ents.extend(t[4::2])
+
+    # qual_ents = set(qual_ents)
+    # main_ents = set(main_ents)
+    # ent_intersection = list(main_ents & qual_ents)
+
+    # print("Num Entities:", n_entities)
+    # print(f"Main Entities: {len(main_ents)}")
+    # print(f"Qualifier Entities: {len(qual_ents)}")
+    # print(f"Intersection Entities: {len(ent_intersection)}")
+
+    # print(f"\n{(len(ent_intersection) / n_entities * 100):.2f}% of the main entities are found in the qualifiers")
+    # exit()
+
 
     config['NUM_ENTITIES'] = n_entities
     config['NUM_RELATIONS'] = n_relations
@@ -189,6 +211,7 @@ def main():
     ev_tr_data = {'index': combine(valid_data, test_data), 'eval': combine(train_data)}
     tr_data = {'train': combine(train_data, valid_data), 'valid': ev_vl_data['eval']}
     eval_metrics = [acc, mrr, mr, partial(hits_at, k=3), partial(hits_at, k=5), partial(hits_at, k=10)]
+
 
     # Saving stuff
     if config['SAVE']:

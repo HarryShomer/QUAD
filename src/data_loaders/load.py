@@ -1109,7 +1109,8 @@ def load_wikipeople_statements(maxlen=17, filter_literals=True) -> Dict:
     """
         :return: train/valid/test splits for the wikipeople dataset in its quints form
     """
-    DIRNAME = Path('./data/raw_data/wikipeople')
+    #DIRNAME = Path('./data/raw_data/wikipeople')
+    DIRNAME = RAW_DATA_DIR / 'wikipeople'
 
     with open(DIRNAME / 'n-ary_train.json', 'r') as f:
         raw_trn = []

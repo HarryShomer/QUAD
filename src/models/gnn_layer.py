@@ -12,12 +12,11 @@ class CompGCNConv(MessagePassing):
     """
     Standard Conv Layer for Compgcn
     """
-    def __init__(self, prop_type, in_channels, out_channels, num_rels, act=lambda x:x, params=None):
+    def __init__(self, in_channels, out_channels, num_rels, act=lambda x:x, params=None):
         # target_to_source -> Edges that flow from x_i to x_j 
         super(self.__class__, self).__init__(flow='target_to_source', aggr='add')
 
         self.p            = params
-        self.prop_type    = prop_type
         self.in_channels  = in_channels
         self.out_channels = out_channels
         self.num_rels     = num_rels
@@ -52,7 +51,7 @@ class CompGCNConv(MessagePassing):
         return '{}({}, {}, num_rels={})'.format(self.__class__.__name__, self.in_channels, self.out_channels, self.num_rels)
 
 
-    def forward(self, x, edge_index, edge_type, rel_embed, quals=None): 
+    def forward(self, prop_type, x, edge_index, edge_type, rel_embed, quals=None, aux_ent_embs=None, aux_rel_embs=None): 
         """
         Forward by prop type for each type of aggregation
         """
@@ -86,12 +85,12 @@ class CompGCNConv(MessagePassing):
 
         # Hack to ensure correct triplets for qual prop_type for inverse
         # Without this we will be aggregating (o, r^-1, s) instead of (qv, qr^-1, s) 
-        if self.prop_type == "qual":
+        if prop_type == "qual":
             out_index, out_type = self.qual_inverse_edges(out_index, quals)
         
 
         # Hack for fixing triplets for prop_type 'both'
-        if self.prop_type == "both":
+        if prop_type == "both":
             # In -> (qv, s)
             in_index = torch.zeros(2, num_quals, dtype=torch.int64).to(self.device)
             in_index[0] = in_index_qual_ent
@@ -133,9 +132,12 @@ class CompGCNConv(MessagePassing):
                         qualifier_ent=in_index_qual_ent,
                         qualifier_rel=in_index_qual_rel,
                         qual_index=quals_index_in,
-                        prop_type=self.prop_type,
+                        prop_type=prop_type,
                         both_obj_index=both_obj_in,
-                        trip_rel=trip_rel_in
+                        trip_rel=trip_rel_in,
+                        # aux_ent_embs=aux_ent_embs, 
+                        # aux_rel_embs=aux_rel_embs,
+                        entity_index=in_index
                     )
 
         out_res = self.propagate(
@@ -149,9 +151,12 @@ class CompGCNConv(MessagePassing):
                         qualifier_ent=out_index_qual_ent,
                         qualifier_rel=out_index_qual_rel,
                         qual_index=quals_index_out,
-                        prop_type=self.prop_type,
+                        prop_type=prop_type,
                         both_obj_index=both_obj_out,
-                        trip_rel=trip_rel_out
+                        trip_rel=trip_rel_out,
+                        # aux_ent_embs=aux_ent_embs, 
+                        # aux_rel_embs=aux_rel_embs,
+                        entity_index=out_index
                     )
 
         loop_res = self.propagate(
@@ -161,7 +166,7 @@ class CompGCNConv(MessagePassing):
                         rel_embed=rel_emb_all, 
                         edge_norm=None, 
                         mode='loop', 
-                        prop_type=self.prop_type
+                        prop_type=prop_type
                     )
 
         out = self.drop(in_res)*(1/3) + self.drop(out_res)*(1/3) + loop_res*(1/3)
@@ -179,7 +184,8 @@ class CompGCNConv(MessagePassing):
 
     def message(self, x_i, x_j, edge_type, rel_embed, edge_norm, mode, ent_embed=None, 
                 qualifier_ent=None, qualifier_rel=None, qual_index=None, prop_type=None, 
-                both_obj_index=None, trip_rel=None):
+                both_obj_index=None, trip_rel=None, aux_ent_embs=None, aux_rel_embs=None, 
+                entity_index=None):
         """
         Define message for MessagePassing class
 
@@ -208,9 +214,17 @@ class CompGCNConv(MessagePassing):
         elif prop_type == "qual":
             comp_agg = self.combine_quals(mode, x_j, ent_embed, rel_sub_embs, qualifier_ent, qualifier_rel, qual_index)
         elif prop_type == "both":
-            trip_rel_embed = torch.index_select(rel_embed, 0, trip_rel)
-            comp_agg = self.combine_quals_trips(x_i, x_j, ent_embed, rel_sub_embs, both_obj_index, trip_rel_embed)
-            # comp_agg = self.combine_quals_trips(x_i, x_j, ent_embed, rel_sub_embs, qualifier_ent, qualifier_rel, qual_index)
+
+            # Needed for aux...
+            # # For in qv is the head but for out the subject is the head
+            # if mode == "in":
+            #     trip_sub_embed = ent_embed[entity_index[1]]
+            # else:
+            #     trip_sub_embed = ent_embed[entity_index[0]]
+
+            trip_rel_embed = rel_embed[trip_rel]
+            trip_obj_embed = ent_embed[both_obj_index]
+            comp_agg = self.combine_quals_trips(x_i, x_j, rel_sub_embs, trip_obj_embed, trip_rel_embed)
 
         out = torch.mm(comp_agg, comp_weight_matrix)
 
@@ -223,15 +237,14 @@ class CompGCNConv(MessagePassing):
         """
         Combine the basic triplet info and sum for given head entity
         """
-        comp_func_out = self.comp_func(x_j, rel_sub_embs)
-        return comp_func_out
+        return self.comp_func(x_j, rel_sub_embs)
 
 
     def combine_quals(self, mode, x_j, ent_embed, rel_embed, ent_index, rel_index, quals_index):
         """
         For a given input combine the qualifier info
 
-        When out it's completely different
+        When out it's completely different since no scatter with head triplet entity
         """
         qualifier_emb_rel = rel_embed[rel_index]
 
@@ -247,7 +260,7 @@ class CompGCNConv(MessagePassing):
         return coalesced_quals
 
 
-    def combine_quals_trips(self, x_i, x_j, ent_embed, rel_embed, both_obj_index, trip_rel_embed):
+    def combine_quals_trips(self, x_i, x_j, rel_embed, trip_obj_embed, trip_rel_embed):
         """
         For a given input combine the qualifier and triplet info
         
@@ -256,19 +269,17 @@ class CompGCNConv(MessagePassing):
             x_j = s
             rel_embed = qr
             trip_rel_embed = r
-            both_obj_index = o
+            trip_obj_embed = o
 
         Out:
             x_i = s
             x_j = qv
             rel_embed = qr^-1
             trip_rel_embed = r
-            both_obj_index = o
-        """
-        obj_embed = ent_embed[both_obj_index]
-        
+            trip_obj_embed = o
+        """        
         # phi_r(o, r)
-        comp_trip_agg  = self.comp_func(obj_embed, trip_rel_embed)
+        comp_trip_agg  = self.comp_func(trip_obj_embed, trip_rel_embed)
 
         # phi_q(s, qr)
         qual_embeddings = self.comp_func(x_j, rel_embed)
