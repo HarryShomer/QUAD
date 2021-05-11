@@ -1,11 +1,10 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
-from torch_scatter import scatter_add, scatter_mean, gather_csr, scatter, segment_csr
 from utils.utils_gcn import get_param, ccorr, rotate, softmax
+from torch_scatter import scatter_add, scatter_mean, gather_csr, scatter, segment_csr
 
 from torch_geometric.nn import MessagePassing
-# from .message_passing import *
 
 
 class CompGCNConv(MessagePassing):
@@ -24,8 +23,8 @@ class CompGCNConv(MessagePassing):
         self.opn          = params['MODEL']['OPN']
         self.device       = None
 
+        # Weight of both comp functions in 'both' aggregate
         self.alpha = params['ALPHA']
-        self.beta = params['BETA']
 
         # Three weight matrices for CompGCN 
         # In = Standard / Out = Inverse
@@ -42,6 +41,7 @@ class CompGCNConv(MessagePassing):
 
         self.drop = torch.nn.Dropout(self.p['MODEL']['GCN_DROP'])
         self.bn   = torch.nn.BatchNorm1d(out_channels)
+
 
 
     def __repr__(self):
@@ -77,11 +77,17 @@ class CompGCNConv(MessagePassing):
 
         # Same for quals since same entity regardless....
         loop_index  = torch.stack([torch.arange(num_ent), torch.arange(num_ent)]).to(self.device)   # Self edges between all the nodes
-        loop_type = torch.full((num_ent,), rel_emb_all.size(0)-1, dtype=torch.long).to(self.device) # Last dim is for self-loop
+        loop_type = torch.full((num_ent,), rel_emb_all.size(0)-1, dtype=torch.long).to(self.device)   # Last dim is for self-loop
 
+
+        # Hack to ensure correct triplets for qual prop_type for inverse
+        # Without this we will be aggregating (o, r^-1, s) instead of (qv, qr^-1, s) 
+        if prop_type == "qual":
+            out_index, out_type = self.qual_inverse_edges(out_index, quals)
         
-        # Hack for fixing triplets for prop_type 'multi-qual'
-        if prop_type == "multi-qual":
+
+        # Hack for fixing triplets for prop_type 'both'
+        if prop_type == "both":
             # In -> (qv, s)
             in_index = torch.zeros(2, num_quals, dtype=torch.int64).to(self.device)
             in_index[0] = in_index_qual_ent
@@ -120,8 +126,8 @@ class CompGCNConv(MessagePassing):
                         edge_norm=in_norm,
                         mode='in',
                         ent_embed=x, 
-                        qual_ent=in_index_qual_ent,
-                        qual_rel=in_index_qual_rel,
+                        qualifier_ent=in_index_qual_ent,
+                        qualifier_rel=in_index_qual_rel,
                         qual_index=quals_index_in,
                         prop_type=prop_type,
                         both_obj_index=both_obj_in,
@@ -139,8 +145,8 @@ class CompGCNConv(MessagePassing):
                         edge_norm=out_norm, 
                         mode='out',
                         ent_embed=x, 
-                        qual_ent=out_index_qual_ent,
-                        qual_rel=out_index_qual_rel,
+                        qualifier_ent=out_index_qual_ent,
+                        qualifier_rel=out_index_qual_rel,
                         qual_index=quals_index_out,
                         prop_type=prop_type,
                         both_obj_index=both_obj_out,
@@ -160,7 +166,7 @@ class CompGCNConv(MessagePassing):
                         prop_type=prop_type
                     )
 
-        out = self.drop(in_res)*(1/3) + self.drop(out_res)*(1/3) + loop_res*(1/3)        
+        out = self.drop(in_res)*(1/3) + self.drop(out_res)*(1/3) + loop_res*(1/3)
         out = self.bn(out)
 
         # Ignoring the self loop inserted at the end since defined in this layer
@@ -170,7 +176,7 @@ class CompGCNConv(MessagePassing):
 
 
     def message(self, x_i, x_j, edge_type, rel_embed, edge_norm, mode, ent_embed=None, 
-                qual_ent=None, qual_rel=None, qual_index=None, prop_type=None, 
+                qualifier_ent=None, qualifier_rel=None, qual_index=None, prop_type=None, 
                 both_obj_index=None, trip_rel=None, aux_ent_embs=None, aux_rel_embs=None, 
                 entity_index=None):
         """
@@ -192,29 +198,34 @@ class CompGCNConv(MessagePassing):
 
         # 1. Loop...basically same as trip but no scatter (since only one edge per entity)
         # 2. Rel & tail to head (v <- u, r)
-        # 3. Main triplet and qual to head (s <- u, r, qv, qr)
+        # 3. Quals to head (v <- qv, qr)
         # 4. Main triplet and qual to qual (qv <- v, u, r, qr)
         if mode == "loop":
             comp_agg = self.comp_func(x_j, rel_sub_embs)
         elif prop_type == "trip":
             comp_agg = self.combine_trips(x_j, rel_sub_embs, ent_embed)
-        elif prop_type == "multi-trip":
-            
-            # Used for mixing embedding types
+        elif prop_type == "qual":
+            comp_agg = self.combine_quals(mode, x_j, ent_embed, rel_sub_embs, qualifier_ent, qualifier_rel, qual_index)
+        elif prop_type == "both":
+
+            # x_j is original subject!
+            # In  -> qv = (s, r, o qr)
+            # Out -> s  = (qv, r, o, qr^-1) 
+
+            # Switch to aux embs if specified
             if aux_ent_embs is not None:
-                # When 'out' the head is the tail
-                x_j = aux_ent_embs[entity_index[1]] if mode == "in" else aux_ent_embs[entity_index[0]]
-                rel_sub_embs = aux_rel_embs[edge_type]
+                trip_rel_embed = aux_rel_embs[trip_rel]
+                trip_obj_embed = aux_ent_embs[both_obj_index]
+                
+                # When out x_j is not qv so don't need aux
+                if mode == "in":
+                    x_j = aux_ent_embs[entity_index[1]]
 
-            comp_agg = self.combine_multi_trips(mode, x_j, rel_sub_embs, ent_embed, rel_embed, qual_ent, qual_rel, qual_index, edge_type.shape[0])
+            else:
+                trip_rel_embed = rel_embed[trip_rel]
+                trip_obj_embed = ent_embed[both_obj_index]
 
-        elif prop_type == "multi-qual":
-            # Needed for aux...
-            # For 'in' qv is the head but for out the subject is the head
-
-            trip_rel_embed = rel_embed[trip_rel]
-            trip_obj_embed = ent_embed[both_obj_index]
-            comp_agg = self.combine_multi_quals(x_i, x_j, rel_sub_embs, trip_obj_embed, trip_rel_embed)
+            comp_agg = self.combine_quals_trips(x_j, rel_sub_embs, trip_obj_embed, trip_rel_embed)
 
         out = torch.mm(comp_agg, comp_weight_matrix)
 
@@ -230,47 +241,44 @@ class CompGCNConv(MessagePassing):
         return self.comp_func(x_j, rel_sub_embs)
 
 
-
-    def combine_multi_trips(self, mode, x_j, trip_rels, ent_embed, rel_embed, qual_ent_ix, qual_rel_ix, qual_parent_ix, num_edges):
+    def combine_quals(self, mode, x_j, ent_embed, rel_embed, ent_index, rel_index, quals_index):
         """
-        s = phi(u, r) * phi(hqv, hqr)
-        """
-        trip_agg  = self.comp_func(x_j, trip_rels)
+        For a given input combine the qualifier info
 
-        # For inverse edges the qualifiers don't apply
+        When out it's completely different since no scatter with head triplet entity
+        """
+        qualifier_emb_rel = rel_embed[rel_index]
+
         if mode == "out":
-            return trip_agg
+            coalesced_quals = self.comp_func(x_j, qualifier_emb_rel)
         else:
-            qual_ent = ent_embed[qual_ent_ix]
-            qual_rel = rel_embed[qual_rel_ix]
-            qual_agg = self.comp_func(qual_ent, qual_rel)
+            qualifier_emb_ent = ent_embed[ent_index]
+            qual_embeddings = self.comp_func(qualifier_emb_ent, qualifier_emb_rel)
 
             # Add up qual pairs that refer to same triplet 
-            coalesced_quals = scatter_add(qual_agg, qual_parent_ix, dim=0, dim_size=num_edges)
+            coalesced_quals = scatter_add(qual_embeddings, quals_index, dim=0, dim_size=rel_embed.shape[0])
 
-            return self.beta * trip_agg + (1 - self.beta) * coalesced_quals
+        return coalesced_quals
 
 
-    def combine_multi_quals(self, x_i, x_j, rel_embed, trip_obj_embed, trip_rel_embed):
+    def combine_quals_trips(self, x_j, rel_embed, trip_obj_embed, trip_rel_embed):
         """
-        hqv = phi(o, r) * phi(s, hqr)
+        For a given input combine the qualifier and triplet info
         
         In:
-            x_i = qv
             x_j = s
             rel_embed = qr
             trip_rel_embed = r
             trip_obj_embed = o
 
         Out:
-            x_i = s
             x_j = qv
             rel_embed = qr^-1
             trip_rel_embed = r
             trip_obj_embed = o
         """        
-        # phi_r(o, r)
-        comp_trip_agg  = self.comp_func(trip_obj_embed, trip_rel_embed)
+        # phi_r(s, r)
+        comp_trip_agg  = self.comp_func(x_j, trip_rel_embed)
 
         # phi_q(s, qr)
         qual_embeddings = self.comp_func(x_j, rel_embed)
@@ -296,6 +304,7 @@ class CompGCNConv(MessagePassing):
         return trans_embed
 
 
+
     def update(self, aggr_out):
         return aggr_out
 
@@ -317,6 +326,30 @@ class CompGCNConv(MessagePassing):
         norm = deg_inv[row] * edge_weight * deg_inv[col] # D^{-0.5}
 
         return norm
+
+
+
+    def qual_inverse_edges(self, inv_edge_index, quals):
+        """
+        Create inverse edges for prop_type 'qual'
+        """        
+        num_quals = quals.size(1) // 2
+        new_edge_index = torch.zeros(2, num_quals, dtype=torch.int64).to(self.device)
+
+        # Head and relation for new inv triplets
+        # Do + num_rels to get inverse of relations        
+        quals_ent_out_index = quals[1, num_quals:]
+        quals_rel_out_index = quals[0, num_quals:] + self.num_rels
+        
+        # Tail of inverse parent triplet...so our final tail indices
+        quals_parent_out_index = quals[2, num_quals:]
+        inv_tails = inv_edge_index[1][quals_parent_out_index]
+
+        new_edge_index[0] = quals_ent_out_index
+        new_edge_index[1] = inv_tails
+
+        return new_edge_index, quals_rel_out_index
+
 
 
 

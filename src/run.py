@@ -10,18 +10,20 @@ import argparse
 # Local imports
 from data_loaders.data_manager import DataManager
 from utils.utils import *
-from utils.utils_mytorch import FancyDict, parse_args, BadParameters, mt_save_dir
+from utils.utils_mytorch import FancyDict, parse_args, BadParameters
 from loops.evaluation import EvaluationBenchGNNMultiClass, evaluate_pointwise
 from loops.evaluation import acc, mrr, mr, hits_at
 from loops.corruption import Corruption
 from loops.sampler import MultiClassSampler
 from loops.loops import training_loop_gcn
 
-from models.hyper_gcn import *
+# from models.hyper_gcn import *
+from models.old_hyper_gcn import *
 
-np.random.seed(42)
 random.seed(42)
-torch.manual_seed(132)
+np.random.seed(42)
+torch.manual_seed(42)
+torch.cuda.manual_seed_all(42)
 
 
 # These shouldn't change
@@ -79,13 +81,14 @@ parser.add_argument("--lr", help="Learning rate to use while training", default=
 parser.add_argument("--dim", help="Latent dimension of entities and relations", type=int, default=200)
 parser.add_argument("--opn", help="Composition function", type=str, default="corr")
 parser.add_argument("--val-every", help="Test on validation set every n epochs", type=int, default=5)
-parser.add_argument("--save", help="Whether to save model", action='store_true', default=False)
 parser.add_argument("--label-smoothing", default=.1, type=float)
 parser.add_argument("--lr-decay", action='store_true', default=False)
-parser.add_argument("--early-stopping", help="Number of validation scores to wait for an increase before stopping", default=3, type=int)
+parser.add_argument("--early-stopping", help="Number of validation scores to wait for an increase before stopping", default=5, type=int)
+parser.add_argument("--dropout", help="Dropout for encoder", default=.3, type=float)
+parser.add_argument("--trans-dim", help="Transformer hidden dimension", type=int, default=512)
 
 # Type of embedding to use
-parser.add_argument("--emb-type", help="Choices -> ['same', 'project', base', diff']. Defaults to 'diff'", type=str, default='diff')
+parser.add_argument("--emb-type", help="Choices -> ['same', 'project', base', diff']", type=str, default='same')
 
 # should be false for WikiPeople and JF17K for their original data
 parser.add_argument("--cleaned-dataset", action='store_true', default=False)
@@ -105,7 +108,6 @@ DEFAULT_CONFIG['EMBEDDING_DIM'] = cmd_args.dim
 DEFAULT_CONFIG['EPOCHS'] = cmd_args.epochs 
 DEFAULT_CONFIG['EVAL_EVERY'] = cmd_args.val_every
 DEFAULT_CONFIG['LEARNING_RATE'] = cmd_args.lr
-DEFAULT_CONFIG['SAVE'] = cmd_args.save
 DEFAULT_CONFIG['LABEL_SMOOTHING'] = cmd_args.label_smoothing
 DEFAULT_CONFIG['CLEANED_DATASET'] = cmd_args.cleaned_dataset
 DEFAULT_CONFIG['LR_SCHEDULER'] = cmd_args.lr_decay
@@ -114,6 +116,8 @@ DEFAULT_CONFIG['ALPHA'] = cmd_args.alpha
 DEFAULT_CONFIG['BETA'] = cmd_args.beta
 DEFAULT_CONFIG['MODEL']['EMB_TYPE'] = cmd_args.emb_type
 DEFAULT_CONFIG['MODEL']['OPN'] = cmd_args.opn
+DEFAULT_CONFIG['MODEL']['ENCODER_DROP_1'] = cmd_args.dropout
+DEFAULT_CONFIG['MODEL']['T_HIDDEN'] = cmd_args.trans_dim
 
 
 
@@ -212,17 +216,6 @@ def main():
     tr_data = {'train': combine(train_data, valid_data), 'valid': ev_vl_data['eval']}
     eval_metrics = [acc, mrr, mr, partial(hits_at, k=3), partial(hits_at, k=5), partial(hits_at, k=10)]
 
-
-    # Saving stuff
-    if config['SAVE']:
-        savedir = Path(f"./models/{config['DATASET']}/{config['MODEL_NAME']}")
-        if not savedir.exists(): savedir.mkdir(parents=True)
-        savedir = mt_save_dir(savedir, _newdir=True)
-        save_content = {'model': model, 'config': config}
-    else:
-        savedir, save_content = None, None
-
-
     sampler = MultiClassSampler(data= tr_data['train'],
                                 n_entities=config['NUM_ENTITIES'],
                                 lbl_smooth=config['LABEL_SMOOTHING'],
@@ -248,8 +241,6 @@ def main():
         "trn_testbench": None,
         "eval_every": config['EVAL_EVERY'],
         "run_trn_testbench": False,
-        "savedir": savedir,
-        "save_content": save_content,
         "qualifier_aware": config['SAMPLER_W_QUALIFIERS'],
         "grad_clipping": config['GRAD_CLIPPING'],
         "early_stopping": config['EARLY_STOPPING'],
@@ -259,10 +250,8 @@ def main():
     print(f"Training on {config['NUM_ENTITIES']} entities and {config['NUM_RELATIONS']} relations!\n")
 
     traces = training_loop_gcn(**args)
-
-    with open('traces.pkl', 'wb+') as f:
-        pickle.dump(traces, f)
-
+    save_model(model)
+    
 
 
 if __name__ == "__main__":

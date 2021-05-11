@@ -11,6 +11,7 @@ class Transformer(nn.Module):
         self.p = params
         self.device = params['DEVICE']
 
+        self.batch_size = params['BATCH_SIZE']
         self.hid_drop = params['MODEL']['TRANSFORMER_DROP']
         self.num_heads = params['MODEL']['T_N_HEADS']
         self.num_hidden = params['MODEL']['T_HIDDEN']
@@ -27,19 +28,26 @@ class Transformer(nn.Module):
         else:
             self.position_embeddings = nn.Embedding(params['MAX_QPAIRS'], self.emb_dim)
 
+        # self.position_embeddings = nn.Embedding(params['MAX_QPAIRS'] + 1, self.emb_dim)
+
 
         self.fc = torch.nn.Linear(self.emb_dim, self.emb_dim)
 
 
-    def concat(self, ent_emb_trip, ent_emb_both, rel_embed, qual_rel_embed, qual_obj_embed):
+    def concat(self, ent_embs, rel_embed, qual_rel_embed, qual_obj_embed):
         """
         Concat all to be passed to Transformer
 
         See below explanantions
         """
         rel_embed = rel_embed.view(-1, 1, self.emb_dim)
-        ent_emb_trip = ent_emb_trip.view(-1, 1, self.emb_dim)
-        ent_emb_both = ent_emb_both.view(-1, 1, self.emb_dim)
+
+        # Happens when we want to concat multiple entity embeddings
+        if isinstance(ent_embs, list):
+            ent_embs = [ent_emb.view(-1, 1, self.emb_dim) for ent_emb in ent_embs]
+        else:
+            ent_embs = ent_embs.view(-1, 1, self.emb_dim)
+
         
         """
         Concat pairs on same row
@@ -79,43 +87,35 @@ class Transformer(nn.Module):
 
         Shape -> (qual_pairs*2 + ent_embeds + rel_embed, batch_size, dim)
         """
-        if self.emb_type == "same":
-            stack_inp = torch.cat([ent_emb_both, rel_embed, quals], 1).transpose(1, 0)
+
+        if isinstance(ent_embs, list):
+            return torch.cat([*ent_embs, rel_embed, quals], 1).transpose(1, 0)
         else:
-            stack_inp = torch.cat([ent_emb_trip, ent_emb_both, rel_embed, quals], 1).transpose(1, 0)
+            return torch.cat([ent_embs, rel_embed, quals], 1).transpose(1, 0)
 
 
-        return stack_inp
 
-
-    def forward(self, ent_emb_trip, ent_emb_both, rel_emb, qual_obj_emb, qual_rel_emb, encoder_out, quals=None):
+    def forward(self, ent_embs, rel_emb, qual_obj_emb, qual_rel_emb, encoder_out, ents=None, quals=None):
         """
         1. Rearrange entity, rel, and quals
         2. Add positional
         3. Pass through transformer 
         """
-        stk_inp = self.concat(ent_emb_trip, ent_emb_both, rel_emb, qual_rel_emb, qual_obj_emb)
+        stk_inp = self.concat(ent_embs, rel_emb, qual_rel_emb, qual_obj_emb)
 
         if self.positional:
             positions = torch.arange(stk_inp.shape[0], dtype=torch.long, device=self.device).repeat(stk_inp.shape[1], 1)
             pos_embeddings = self.position_embeddings(positions).transpose(1, 0)
             stk_inp = stk_inp + pos_embeddings
 
-        # mask which shows which entities were padded - for future purposes, True means to mask (in transformer)
-        # https://github.com/pytorch/pytorch/blob/master/torch/nn/functional.py : 3770
-        # so we first initialize with False
-        
-        # = # entities + 1 relation
-        mask_pos = 2 if self.emb_type == "same" else 3
-
-        mask = torch.zeros((ent_emb_both.shape[0], quals.shape[1] + mask_pos)).bool().to(self.device)
-        
-        # Put True where qual entities and relations are actually padding index 0.
+        # Mask qualifier pairs that are empty
+        # e.g. If 2 pairs then mask[:, 2+4:] = True, otherwise False
+        mask_pos = 2  # = Num entities + 1 relation
+        mask = torch.zeros((ents.shape[0], quals.shape[1] + mask_pos)).bool().to(self.device)
         mask[:, mask_pos:] = quals == 0
         
         x = self.encoder(stk_inp, src_key_padding_mask=mask)
         
-        # self.pooling == "avg":
         x = torch.mean(x, dim=0)
         x = self.fc(x)
         

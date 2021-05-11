@@ -4,6 +4,7 @@ Original source can be found here -> https://github.com/migalkin/StarE/blob/mast
 
 import torch
 import pickle
+import random
 import numpy as np
 import torch.nn as nn
 from pathlib import Path
@@ -19,16 +20,23 @@ RAW_DATA_DIR = Path('./data/raw_data')
 PARSED_DATA_DIR = Path('./data/parsed_data')
 
 
+random.seed(42)
+np.random.seed(42)
+torch.manual_seed(42)
+torch.cuda.manual_seed_all(42)
 
-# class DataParallel(nn.DataParallel):
-#     """
-#     Extend DataParallel class to access model level attributes/methods
-#     """
-#     def __getattr__(self, name):
-#         try:
-#             return super().__getattr__(name)
-#         except AttributeError:
-#             return getattr(self.module, name)
+
+
+def save_model(model_obj):
+    """
+    """
+    torch.save({
+        "model_state_dict": model_obj.state_dict(),
+        "emb_type": model_obj.emb_type,
+        "dim": model_obj.emb_dim
+    }, 
+        f"Hyper_kg_{model_obj.emb_type}_{model_obj.emb_dim}.tar"
+    )
 
 
 
