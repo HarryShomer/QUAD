@@ -32,6 +32,9 @@ class CompGCNConv(MessagePassing):
         self.w_in   = get_param((in_channels, out_channels))
         self.w_out  = get_param((in_channels, out_channels))
 
+        # qual pairs
+        self.w_q = get_param((in_channels, in_channels))
+
         # Weight matrix for relation update
         self.w_rel  = get_param((in_channels, out_channels))
 
@@ -203,7 +206,23 @@ class CompGCNConv(MessagePassing):
         if mode == "loop":
             comp_agg = self.comp_func(x_j, rel_sub_embs)
         elif prop_type == "trip":
-            comp_agg = self.combine_trips(x_j, rel_sub_embs, ent_embed)
+
+            # phi(u, r)
+            trip_agg = self.combine_trips(x_j, rel_sub_embs, ent_embed)
+            
+            # phi(qv, qr)
+            qual_comp = self.comp_func(ent_embed[qualifier_ent], rel_embed[qualifier_rel])
+
+            # Sum by base triplet
+            qual_coalesce = scatter_add(qual_comp, qual_index, dim=0, dim_size=rel_sub_embs.shape[0])
+
+            # h_q
+            qualifier_emb = torch.mm(qual_coalesce, self.w_q)
+            
+            # Combine with phi_r(u, r)
+            comp_agg = self.alpha * trip_agg + (1 - self.alpha) * qualifier_emb  
+
+
         elif prop_type == "qual":
             comp_agg = self.combine_quals(mode, x_j, ent_embed, rel_sub_embs, qualifier_ent, qualifier_rel, qual_index)
         elif prop_type == "both":
@@ -239,6 +258,7 @@ class CompGCNConv(MessagePassing):
         Combine the basic triplet info and sum for given head entity
         """
         return self.comp_func(x_j, rel_sub_embs)
+
 
 
     def combine_quals(self, mode, x_j, ent_embed, rel_embed, ent_index, rel_index, quals_index):

@@ -1,15 +1,16 @@
 """
 Original source can be found here -> https://github.com/migalkin/StarE/blob/master/utils/utils_gcn.py
 """
-
 import logging
 import logging.config
 import inspect
 import numpy as np
+import random
 
 # PyTorch related imports
 import torch
 import torch_scatter
+import torch.nn as nn
 from torch.nn import Parameter
 from torch.nn.init import xavier_normal_
 from torch_scatter import scatter_add, scatter_max
@@ -19,84 +20,14 @@ np.set_printoptions(precision=4)
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
+# Ensure Deterministic
+random.seed(42)
+np.random.seed(42)
+torch.manual_seed(132)
+torch.cuda.manual_seed_all(132)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
-class MessagePassing(torch.nn.Module):
-    r"""Base class for creating message passing layers
-
-    .. math::
-        \mathbf{x}_i^{\prime} = \gamma_{\mathbf{\Theta}} \left( \mathbf{x}_i,
-        \square_{j \in \mathcal{N}(i)} \, \phi_{\mathbf{\Theta}}
-        \left(\mathbf{x}_i, \mathbf{x}_j,\mathbf{e}_{i,j}\right) \right),
-
-    where :math:`\square` denotes a differentiable, permutation invariant
-    function, *e.g.*, sum, mean or max, and :math:`\gamma_{\mathbf{\Theta}}`
-    and :math:`\phi_{\mathbf{\Theta}}` denote differentiable functions such as
-    MLPs.
-    See `here <https://rusty1s.github.io/pytorch_geometric/build/html/notes/
-    create_gnn.html>`__ for the accompanying tutorial.
-
-    """
-
-    def __init__(self, aggr='add'):
-        super(MessagePassing, self).__init__()
-
-        # In the defined message function: get the list of arguments as list of string|
-        # For eg. in r-gcn this will be ['x_j', 'edge_type', 'edge_norm'] (args of message fn)
-        self.message_args = inspect.getargspec(self.message)[0][1:]
-        # Same for update function starting from 3rd argument | first=self, second=out
-        self.update_args = inspect.getargspec(self.update)[0][2:]
-
-    def propagate(self, aggr, edge_index, **kwargs):
-        r"""The initial call to start propagating messages.
-        Takes in an aggregation scheme (:obj:`"add"`, :obj:`"mean"` or
-        :obj:`"max"`), the edge indices, and all additional data which is
-        needed to construct messages and to update node embeddings."""
-
-        assert aggr in ['add', 'mean', 'max']
-        kwargs['edge_index'] = edge_index
-
-        size = None
-        message_args = []
-        for arg in self.message_args:
-            if arg[-2:] == '_i':  # If arguments ends with _i then include indic
-                tmp = kwargs[
-                    arg[:-2]]  # Take the front part of the variable | Mostly it will be 'x',
-                size = tmp.size(0)
-                message_args.append(tmp[edge_index[0]])  # Lookup for head entities in edges
-            elif arg[-2:] == '_j':
-                tmp = kwargs[arg[:-2]]  # tmp = kwargs['x']
-                size = tmp.size(0)
-                message_args.append(tmp[edge_index[1]])  # Lookup for tail entities in edges
-            else:
-                message_args.append(kwargs[arg])  # Take things from kwargs
-
-        update_args = [kwargs[arg] for arg in self.update_args]  # Take update args from kwargs
-
-        out = self.message(*message_args)
-        out = scatter_(aggr, out, edge_index[0],
-                       dim_size=size)  # Aggregated neighbors for each vertex
-        out = self.update(out, *update_args)
-
-        return out
-
-    def message(self, x_j):  # pragma: no cover
-        r"""Constructs messages in analogy to :math:`\phi_{\mathbf{\Theta}}`
-        for each edge in :math:`(i,j) \in \mathcal{E}`.
-        Can take any argument which was initially passed to :meth:`propagate`.
-        In addition, features can be lifted to the source node :math:`i` and
-        target node :math:`j` by appending :obj:`_i` or :obj:`_j` to the
-        variable name, *.e.g.* :obj:`x_i` and :obj:`x_j`."""
-
-        return x_j
-
-    def update(self, aggr_out):  # pragma: no cover
-        r"""Updates node embeddings in analogy to
-        :math:`\gamma_{\mathbf{\Theta}}` for each node
-        :math:`i \in \mathcal{V}`.
-        Takes in the output of aggregation as first argument and any argument
-        which was initially passed to :meth:`propagate`."""
-
-        return aggr_out
 
 def maybe_num_nodes(index, num_nodes=None):
     return index.max().item() + 1 if num_nodes is None else num_nodes
@@ -130,6 +61,18 @@ def get_param(shape):
     return param
 
 
+def get_rotate_param(num, dim):
+    """
+    num = Number of entites/relations
+    dim = Dimension for embeddings
+    """
+    phases = 2 * np.pi * torch.rand(num, dim // 2)
+    return nn.Parameter(torch.cat([
+                torch.cat([torch.cos(phases),  torch.sin(phases)], dim=-1),
+                torch.cat([torch.cos(phases), -torch.sin(phases)], dim=-1)
+            ], dim=0))
+
+
 def com_mult(a, b):
     r1, i1 = a[..., 0], a[..., 1]
     r2, i2 = b[..., 0], b[..., 1]
@@ -148,6 +91,7 @@ def cconv(a, b):
 def ccorr(a, b):
     return torch.irfft(com_mult(conj(torch.rfft(a, 1)), torch.rfft(b, 1)), 1, signal_sizes=(a.shape[-1],))
 
+
 def rotate(h, r):
     # re: first half, im: second half
     # assume embedding dim is the last dimension
@@ -155,6 +99,7 @@ def rotate(h, r):
     h_re, h_im = torch.split(h, d // 2, -1)
     r_re, r_im = torch.split(r, d // 2, -1)
     return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
+
 
 
 def scatter_(name, src, index, dim_size=None):

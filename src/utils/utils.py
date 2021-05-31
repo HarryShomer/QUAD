@@ -20,22 +20,16 @@ RAW_DATA_DIR = Path('./data/raw_data')
 PARSED_DATA_DIR = Path('./data/parsed_data')
 
 
-random.seed(42)
-np.random.seed(42)
-torch.manual_seed(42)
-torch.cuda.manual_seed_all(42)
 
-
-
-def save_model(model_obj):
+def save_model(model_obj, dataset):
     """
     """
     torch.save({
         "model_state_dict": model_obj.state_dict(),
-        "emb_type": model_obj.emb_type,
-        "dim": model_obj.emb_dim
+        "dim": model_obj.emb_dim,
+        "alpha": model_obj.config['ALPHA']
     }, 
-        f"Hyper_kg_{model_obj.emb_type}_{model_obj.emb_dim}.tar"
+        f"Hyper_kg_{dataset}_{model_obj.emb_dim}_{int(model_obj.config['ALPHA'] * 100)}.tar"
     )
 
 

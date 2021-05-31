@@ -8,6 +8,7 @@ import types
 
 # Local
 from utils.utils import *
+from utils.utils_gcn import *
 from utils.utils_mytorch import Timer
 
 
@@ -129,16 +130,19 @@ class EvaluationBenchGNNMultiClass:
     @staticmethod
     def summarize_run(summary: dict):
         """ Nicely print what just went down """
-        print(f"This run over {summary['data_length']} datapoints took "
-              f"%(time).3f min" % {'time': summary['time_taken'] / 60.0}, flush=True)
-        print("---------\n", flush=True)
+        # print(f"This run over {summary['data_length']} datapoints took "
+        #       f"%(time).3f min" % {'time': summary['time_taken'] / 60.0}, flush=True)
+        # print("---------\n", flush=True)
+
         print('Object prediction results', flush=True)
         for k, v in summary['left'].items():
             print(k, ':', "%(v).4f" % {'v': v}, flush=True)
+            
         print("---------\n", flush=True)
         print('Subject prediction results', flush=True)
         for k, v in summary['right'].items():
             print(k, ':', "%(v).4f" % {'v': v}, flush=True)
+
         print("---------\n", flush=True)
         print('Overall prediction results', flush=True)
         for k, v in summary['metrics'].items():

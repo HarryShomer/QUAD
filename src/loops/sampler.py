@@ -1,8 +1,9 @@
 """
 Original source can be found here -> https://github.com/migalkin/StarE/blob/master/loops/sampler.py
 """
-
+from utils.utils_gcn import *
 from utils.utils import *
+
 
 class MultiClassSampler:
     """
@@ -13,8 +14,7 @@ class MultiClassSampler:
 
 
     """
-    def __init__(self, data: Union[np.array, list], n_entities: int,
-                 lbl_smooth: float = 0.0, bs: int = 64, with_q: bool = False):
+    def __init__(self, data: Union[np.array, list], n_entities: int, lbl_smooth: float = 0.0, bs: int = 64, with_q: bool = False):
         """
 
         :param data: data as an array of statements of STATEMENT_LEN, e.g., [0,0,0] or [0,1,0,2,4]
@@ -35,8 +35,8 @@ class MultiClassSampler:
 
 
     def shuffle(self):
-        # npr.shuffle(self.data)
-        npr.shuffle(self.keys)
+        np.random.shuffle(self.keys)
+
 
     def build_index(self):
         self.index = defaultdict(list)
@@ -95,7 +95,7 @@ class MultiClassSampler:
             Each time, take `bs` pos
         """
         if self.i >= len(self.keys)-1:  # otherwise batch norm will fail
-            print("Should stop")
+            # print("Should stop")
             raise StopIteration
 
         _statements = self.keys[self.i: min(self.i + self.bs, len(self.keys))]
