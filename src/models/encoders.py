@@ -48,7 +48,7 @@ class HypRelEncoder(nn.Module):
 
 
 
-    def forward(self, prop_type, ent_ix, rel_ix, quals_ix, ent_embs, rel_embs):
+    def forward(self, prop_type, ent_embs, rel_embs):
         """"
         Pass through encoder
 
@@ -75,21 +75,4 @@ class HypRelEncoder(nn.Module):
                     )
             x = self.drop2(x) 
 
-        # sub_emb = torch.index_select(x, 0, ent_ix)
-        # rel_emb = torch.index_select(r, 0, rel_ix)
-
-        # # flatten quals
-        # quals_ents = quals_ix[:, 1::2].view(1,-1).squeeze(0)
-        # quals_rels = quals_ix[:, 0::2].view(1,-1).squeeze(0)
-
-        # qual_obj_emb = torch.index_select(x, 0, quals_ents)
-        # qual_rel_emb = torch.index_select(r, 0, quals_rels)
-
-        # qual_obj_emb = qual_obj_emb.view(sub_emb.shape[0], -1 ,sub_emb.shape[1])
-        # qual_rel_emb = qual_rel_emb.view(rel_emb.shape[0], -1, rel_emb.shape[1])
-
-        # return sub_emb, rel_emb, qual_obj_emb, qual_rel_emb, x, r
-
         return x, r
-
-

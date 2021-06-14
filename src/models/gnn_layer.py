@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 from utils.utils_gcn import get_param, ccorr, rotate, softmax
-from torch_scatter import scatter_add, scatter_mean, gather_csr, scatter, segment_csr
+from torch_scatter import scatter_add, scatter_min
 
 from torch_geometric.nn import MessagePassing
 
@@ -84,7 +84,7 @@ class CompGCNConv(MessagePassing):
 
         # Same for quals since same entity regardless....
         loop_index  = torch.stack([torch.arange(num_ent), torch.arange(num_ent)]).to(self.device)   # Self edges between all the nodes
-        loop_type = torch.full((num_ent,), rel_emb_all.size(0)-1, dtype=torch.long).to(self.device)   # Last dim is for self-loop
+        loop_type = torch.full((num_ent,), rel_emb_all.size(0)-1, dtype=torch.long).to(self.device) # Last dim is for self-loop
 
         # Hack for fixing triplets for prop_type 'qual'
         if prop_type == "qual":
@@ -205,7 +205,17 @@ class CompGCNConv(MessagePassing):
 
             # h_q
             qualifier_emb = torch.mm(qual_coalesce, self.w_q)
-            
+   
+            #######################
+            # If trip has at least one qualifier -> 1 if True else 0
+            # ones = torch.ones(qual_index.shape[0]).to(self.device)
+            # trip_has_qual = scatter_min(ones, qual_index, dim=0, dim_size=rel_sub_embs.shape[0])[0]
+
+            # # Expand for emb dimension
+            # trip_has_qual = trip_has_qual.repeat(self.emb_dim, 1).transpose(0, 1)
+            # comp_agg = torch.where(trip_has_qual == 0, trip_agg, self.alpha * trip_agg + (1 - self.alpha) * qualifier_emb)
+            #######################
+
             # Combine with phi_r(u, r)
             comp_agg = self.alpha * trip_agg + (1 - self.alpha) * qualifier_emb  
 
@@ -228,7 +238,6 @@ class CompGCNConv(MessagePassing):
         Combine the basic triplet info and sum for given head entity
         """
         return self.comp_func(x_j, rel_sub_embs)
-
 
 
     def combine_quals(self, x_j, rel_embed, trip_obj_embed, trip_rel_embed, mode):

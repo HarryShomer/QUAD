@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
     'ENT_POS_FILTERED': True,
     'MAX_QPAIRS': 15,
     'MODEL_NAME': 'hyper_kg',
-    'CORRUPTION_POSITIONS': [0, 2]
+    'CORRUPTION_POSITIONS': [0, 2]  # head and tail
 }
 
 # TODO: Add to Argparse
@@ -57,6 +57,8 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("dataset", help="Dataset to run it on")
 parser.add_argument("--device", type=str, default='cuda')
+parser.add_argument("--only-trips", help="Only do triplet aggregation", action='store_true', default=False)
+parser.add_argument("--test-on-val", help="When true testing done on val set. Otherwise we train on train+val and test on test set.", action='store_true', default=False)
 parser.add_argument("--epochs", help="Number of epochs to run", default=500, type=int)
 parser.add_argument("--batch-size", help="Batch size to use for training", default=128, type=int)
 parser.add_argument("--lr", help="Learning rate to use while training", default=1e-4, type=float)
@@ -71,19 +73,21 @@ parser.add_argument("--encoder-drop1", help="1st Dropout for encoder", default=.
 parser.add_argument("--encoder-drop2", help="2nd Dropout for encoder", default=.3, type=float)
 parser.add_argument("--trans-dim", help="Transformer hidden dimension", type=int, default=512)
 parser.add_argument("--fact-encoder", help="linear or transformer", type=str, default="linear")
+parser.add_argument("--qual-layers", help="Number of Layers in Qual Encoder", default=2, type=int)
+parser.add_argument("--lr-lambda", help="LR Decay", default=.9975, type=float)
+parser.add_argument("--alpha", help="Parameter for controlling flow of qualifier info", type=float, default=.7)
 
 # should be false for WikiPeople and JF17K for their original data
-parser.add_argument("--cleaned-dataset", help="Only use for WD50K datasets", action='store_true', default=False)
+parser.add_argument("--clean-data", help="Only use for WD50K datasets", action='store_true', default=False)
 
-parser.add_argument("--only-trips", help="Only do triplet aggregation", action='store_true', default=False)
-parser.add_argument("--test-on-val", help="When true testing done on val set. Otherwise we train on train+val and test on test set.", action='store_true', default=False)
+parser.add_argument("--aux", help="Include auxillary training task", action='store_true', default=False)
+parser.add_argument("--aux-weight", help="Weight for aux loss", type=float, default=.5)
 
-# Hyperparams controlling flow of qualifier info
-parser.add_argument("--alpha", help="Parameter for controlling flow of qualifier info", type=float, default=.5)
-parser.add_argument("--beta", help="Parameter for controlling flow of qualifier info", type=float, default=.5)
 
 cmd_args = parser.parse_args()
 DEFAULT_CONFIG['MODEL'] = MODEL_CONFIG
+DEFAULT_CONFIG['AUX_TRAIN'] = cmd_args.aux
+DEFAULT_CONFIG['LAMBDA'] = cmd_args.lr_lambda
 DEFAULT_CONFIG['USE_TEST'] = not cmd_args.test_on_val
 DEFAULT_CONFIG['BATCH_SIZE'] = cmd_args.batch_size
 DEFAULT_CONFIG['DATASET'] = cmd_args.dataset.lower()
@@ -93,19 +97,19 @@ DEFAULT_CONFIG['EPOCHS'] = cmd_args.epochs
 DEFAULT_CONFIG['EVAL_EVERY'] = cmd_args.val_every
 DEFAULT_CONFIG['LEARNING_RATE'] = cmd_args.lr
 DEFAULT_CONFIG['LABEL_SMOOTHING'] = cmd_args.label_smoothing
-DEFAULT_CONFIG['CLEANED_DATASET'] = cmd_args.cleaned_dataset
+DEFAULT_CONFIG['CLEANED_DATASET'] = cmd_args.clean_data
 DEFAULT_CONFIG['LR_SCHEDULER'] = cmd_args.lr_decay
 DEFAULT_CONFIG['EARLY_STOPPING'] = cmd_args.early_stopping
 DEFAULT_CONFIG['ONLY-TRIPS'] = cmd_args.only_trips
 DEFAULT_CONFIG['ALPHA'] = cmd_args.alpha
-DEFAULT_CONFIG['BETA'] = cmd_args.beta
+DEFAULT_CONFIG['AUX_WEIGHT'] = cmd_args.aux_weight
 DEFAULT_CONFIG['FACT_ENCODER'] = cmd_args.fact_encoder.lower()
 DEFAULT_CONFIG['MODEL']['OPN'] = cmd_args.opn
 DEFAULT_CONFIG['MODEL']['ENCODER_DROP_2'] = cmd_args.encoder_drop1
 DEFAULT_CONFIG['MODEL']['ENCODER_DROP_1'] = cmd_args.encoder_drop2
 DEFAULT_CONFIG['MODEL']['T_HIDDEN'] = cmd_args.trans_dim
 DEFAULT_CONFIG['MODEL']['GCN_DROP'] = cmd_args.gcn_drop
-
+DEFAULT_CONFIG['MODEL']['QUAL_LAYERS'] = cmd_args.qual_layers
 
 
 def get_data(config):
@@ -113,6 +117,8 @@ def get_data(config):
     Get the data for the specific dataset requested
     """
     data = DataManager.load(config=config)()
+
+    # _data hold indices of entites/relations
     train_data, valid_data, test_data, n_entities, n_relations, _, _ = data.values()
 
     config['NUM_ENTITIES'] = n_entities
@@ -131,6 +137,7 @@ def get_data(config):
     else:
         ent_excluded_from_corr = [0]
 
+    # Inverses are added here in `get_alternative_graph_repr` !!!
     # -> edge_index (2 x n) matrix with [subject_ent, object_ent] as each row.
     # -> edge_type (n) array with [relation] corresponding to sub, obj above
     # -> quals (3 x nQ) matrix where columns represent quals [qr, qv, k] for each k-th edge that has quals
@@ -138,6 +145,21 @@ def get_data(config):
         train_data_gcn = DataManager.get_alternative_graph_repr(train_data + valid_data, config)
     else:
         train_data_gcn = DataManager.get_alternative_graph_repr(train_data, config)
+
+    # from collections import Counter
+
+    # num_quals = train_data_gcn['quals'][2].shape[0] // 2
+    # num_rows = train_data_gcn['edge_type'].shape[0] // 2
+
+    # row_quals = [0 for _ in range(num_rows)]
+
+    # for x in train_data_gcn['quals'][2][:num_quals]:
+    #     row_quals[x] += 1
+    
+    # qual_count = Counter(row_quals)
+    
+    # for i, c in qual_count.items():
+    #     print(f"{i}: {round(c / num_rows * 100, 2)}")
 
     # add reciprocals to the train data
     reci = DataManager.add_reciprocals(train_data, config)
@@ -175,11 +197,8 @@ def main():
 
     eval_metrics = [acc, mrr, mr, partial(hits_at, k=3), partial(hits_at, k=5), partial(hits_at, k=10)]
 
-    sampler = MultiClassSampler(data= tr_data['train'],
-                                n_entities=config['NUM_ENTITIES'],
-                                lbl_smooth=config['LABEL_SMOOTHING'],
-                                bs=config['BATCH_SIZE'],
-                                with_q=config['SAMPLER_W_QUALIFIERS'])
+    sampler = MultiClassSampler(data= tr_data['train'], n_entities=config['NUM_ENTITIES'], lbl_smooth=config['LABEL_SMOOTHING'],
+                                bs=config['BATCH_SIZE'], aux_train=config['AUX_TRAIN'])
 
     evaluation_valid = EvaluationBenchGNNMultiClass(ev_val_data, model, bs=config['BATCH_SIZE'], metrics=eval_metrics,
                                                     filtered=True, n_ents=config['NUM_ENTITIES'],
@@ -192,15 +211,16 @@ def main():
         "data": tr_data,
         "opt": optimizer,
         "model": model,
-        #"neg_generator": Corruption(n=config['NUM_ENTITIES'], excluding=[0], position=list(range(0, config['MAX_QPAIRS'], 2))),
         "device": config['DEVICE'],
         "data_fn": sampler.reset,
         "val_testbench": evaluation_valid.run,
         "eval_every": config['EVAL_EVERY'],
-        "qualifier_aware": config['SAMPLER_W_QUALIFIERS'],
         "grad_clipping": config['GRAD_CLIPPING'],
         "early_stopping": config['EARLY_STOPPING'],
-        "scheduler": torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None
+        #"scheduler": torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None
+        "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda e: config['LAMBDA']**e) if config['LR_SCHEDULER'] else None,
+        "aux_train": config['AUX_TRAIN'],
+        "aux_weight": config['AUX_WEIGHT']
     }
 
     print(f"Training on {config['NUM_ENTITIES']} entities and {config['NUM_RELATIONS']} relations!\n", flush=True)

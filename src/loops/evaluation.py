@@ -92,7 +92,6 @@ class EvaluationBenchGNNMultiClass:
         # statement shape for correct processing of the very last batch which size might be less than self.bs
         y = np.zeros((statements.shape[0], self.config['NUM_ENTITIES']), dtype=np.float32)
 
-
         for i, s in enumerate(statements):
             s, r, quals = s[0], s[1], s[3:] if self.data_eval.shape[1] > 3 else None
             lbls = self.index[(s, r, *quals)] if self.config['SAMPLER_W_QUALIFIERS'] else self.index[(s,r)]
@@ -150,7 +149,7 @@ class EvaluationBenchGNNMultiClass:
 
     def compute(self, pred, obj, label, results):
         """
-            Discard the predictions for all objects not in label (not currently evaluated)
+        Discard the predictions for all objects not in label (not currently evaluated)
 
         :param pred: a 2D bs, ne tensor containing bs distributions over entities
         :param obj: the actual objects being predicted
@@ -212,14 +211,12 @@ class EvaluationBenchGNNMultiClass:
                             rels = torch.tensor(eval_batch_direct[:, 1], device=self.config['DEVICE'])
                             objs = torch.tensor(eval_batch_direct[:, 2], device=self.config['DEVICE'])
                             labels = torch.tensor(self.get_label(eval_batch_direct), device=self.config['DEVICE'])
-                            if not self.config['SAMPLER_W_QUALIFIERS']:
-                                scores = self.model.forward(subs, rels)
-                            else:
-                                quals = torch.tensor(eval_batch_direct[:, 3:], device=self.config['DEVICE'])
-                                scores = self.model.forward(subs, rels, quals)
+
+                            quals = torch.tensor(eval_batch_direct[:, 3:], device=self.config['DEVICE'])
+                            scores = self.model.forward(subs, rels, quals)
+
                             metr = self.compute(scores, objs, labels, metr)
                         left_metrics = self._summarize_metrics_(metr, len(self.left_eval))
-
 
                     elif position == 2:
                         # evaluate "reci"
@@ -229,12 +226,10 @@ class EvaluationBenchGNNMultiClass:
                             rels = torch.tensor(eval_batch_reci[:, 1], device=self.config['DEVICE'])
                             objs = torch.tensor(eval_batch_reci[:, 2], device=self.config['DEVICE'])
                             labels = torch.tensor(self.get_label(eval_batch_reci), device=self.config['DEVICE'])
-                            if not self.config['SAMPLER_W_QUALIFIERS']:
-                                # eval_batch_reci = torch.cat((subs.unsqueeze(1), rels.unsqueeze(1), objs.unsqueeze(1)), dim=1)
-                                scores = self.model.forward(subs, rels)
-                            else:
-                                quals = torch.tensor(eval_batch_reci[:, 3:], device=self.config['DEVICE'])
-                                scores = self.model.forward(subs, rels, quals)
+
+                            quals = torch.tensor(eval_batch_reci[:, 3:], device=self.config['DEVICE'])
+                            scores = self.model.forward(subs, rels, quals)
+                                
                             metr = self.compute(scores, objs, labels, metr)
                         right_metrics = self._summarize_metrics_(metr, len(self.right_eval))
 
@@ -304,6 +299,3 @@ def evaluate_dataset(scores: torch.Tensor):
 
     return accuracy.detach().cpu().numpy(), recirank.detach().cpu().numpy()
 
-
-if __name__ == "__main__":
-    print("smth")

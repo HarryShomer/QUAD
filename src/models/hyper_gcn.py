@@ -1,5 +1,8 @@
 from .encoders import *
+
 from .transformers import *
+# from .old_transformers import *
+
 from utils.utils_gcn import *
 
 
@@ -8,13 +11,13 @@ class HypRelModel(nn.Module):
     def __init__(self, data, config):
         super(self.__class__, self).__init__()
 
-        self.config  = config
-        self.device  = config['DEVICE']
-        self.opn     = config['MODEL']['OPN']
-        self.num_ent = config['NUM_ENTITIES']
-        self.num_rel = config['NUM_RELATIONS']
-        self.emb_dim = config['EMBEDDING_DIM']
-        self.beta    = config['BETA']
+        self.config    = config
+        self.device    = config['DEVICE']
+        self.aux_train = config['AUX_TRAIN']
+        self.opn       = config['MODEL']['OPN']
+        self.num_ent   = config['NUM_ENTITIES']
+        self.num_rel   = config['NUM_RELATIONS']
+        self.emb_dim   = config['EMBEDDING_DIM']
 
         self.ent_embs = get_param((self.num_ent, self.emb_dim))
         self.rel_embs = self.get_rel_emb()
@@ -25,10 +28,15 @@ class HypRelModel(nn.Module):
         self.qual_encoder = HypRelEncoder(data, config, config['MODEL']['QUAL_LAYERS'], qual=True)
         self.qual_encoder.to(self.device)
 
-        self.decoder = TransformerDecoder(config)
+        # Only use Mask when including aux
+        self.decoder = MaskedTransformerDecoder(config) if self.aux_train else TransformerDecoder(config)
         self.decoder.to(self.device)
 
-        self.loss = torch.nn.BCELoss()
+        self.loss_fn = torch.nn.BCELoss()
+
+
+    def loss(self, preds, labels):
+        return self.loss_fn(preds, labels)
 
 
     def get_rel_emb(self):
@@ -41,15 +49,16 @@ class HypRelModel(nn.Module):
             return get_param((self.num_rel * 2, self.emb_dim))
 
 
-    def index_embs(self, x, r, ent_ix, rel_ix, quals_ix):
+    def index_embs(self, x, r, sub_ix, rel_ix, quals_ix):
         """
+        Index entity and relation embeddings from matrices
         """
-        sub_emb = torch.index_select(x, 0, ent_ix)
+        sub_emb = torch.index_select(x, 0, sub_ix)
         rel_emb = torch.index_select(r, 0, rel_ix)
 
-        # flatten quals
-        quals_ents = quals_ix[:, 1::2].view(1,-1).squeeze(0)
-        quals_rels = quals_ix[:, 0::2].view(1,-1).squeeze(0)
+        # Flatten quals
+        quals_ents = quals_ix[:, 1::2].reshape(1, -1).squeeze(0)
+        quals_rels = quals_ix[:, 0::2].reshape(1, -1).squeeze(0)
 
         qual_obj_emb = torch.index_select(x, 0, quals_ents)
         qual_rel_emb = torch.index_select(r, 0, quals_rels)
@@ -60,7 +69,16 @@ class HypRelModel(nn.Module):
         return sub_emb, rel_emb, qual_obj_emb, qual_rel_emb
 
 
-    def forward(self, ent_ix, rel_ix, quals_ix):
+    def index_embs_aux(self, x, r, sub_ix, rel_ix, obj_ix, quals_ix):
+        """
+        Include obj index
+        """
+        obj_emb = torch.index_select(x, 0, obj_ix)
+
+        return *self.index_embs(x, r, sub_ix, rel_ix, quals_ix), obj_emb
+
+
+    def forward(self, sub_ix, rel_ix, quals_ix, aux_sub_ix=None, aux_rel_ix=None, aux_obj_ix=None, quals_wo_pair_ix=None):
         """
         1. Get embeddings (if bases or not)
         2. Forward each encoder
@@ -69,20 +87,22 @@ class HypRelModel(nn.Module):
         init_ent = self.ent_embs
         init_rel = self.rel_embs
 
-        # x1, r1 = self.trip_encoder("trip", ent_ix, rel_ix, quals_ix, init_ent, init_rel)
-
-        # if not self.config['ONLY-TRIPS']:
-        #     x2, r2 = self.qual_encoder("qual", ent_ix, rel_ix, quals_ix, x1, r1)
-        #     x = self.beta * x1 + (1 - self.beta) * x2
-        #     r = self.beta * r1 + (1 - self.beta) * r2
-        # else:
-        #     x, r = x1, r1
-
-        x, r = self.trip_encoder("trip", ent_ix, rel_ix, quals_ix, init_ent, init_rel)
+        x, r = self.trip_encoder("trip", init_ent, init_rel)
 
         if not self.config['ONLY-TRIPS']:
-            x, r = self.qual_encoder("qual", ent_ix, rel_ix, quals_ix, x, r)
+            x, r = self.qual_encoder("qual", x, r)
+        
+        # Subject Prediction
+        s_emb, r_emb, qe_emb, qr_emb = self.index_embs(x, r, sub_ix, rel_ix, quals_ix)
+        obj_preds = self.decoder(s_emb, r_emb, qe_emb, qr_emb, x, sub_ix.shape, quals_ix=quals_ix)
     
-        e_emb, r_emb, qe_emb, qr_emb = self.index_embs(x, r, ent_ix, rel_ix, quals_ix)
+        # Qual Entity prediction if included
+        if aux_obj_ix is not None:
+            s_emb, r_emb, qe_emb, qr_emb, o_emb = self.index_embs_aux(x, r, aux_sub_ix, aux_rel_ix, aux_obj_ix, quals_wo_pair_ix)
+            qual_preds = self.decoder(s_emb, r_emb, qe_emb, qr_emb, x, aux_sub_ix.shape, tail_embs=o_emb, quals_ix=quals_wo_pair_ix)
 
-        return self.decoder(e_emb, r_emb, qe_emb, qr_emb, x, ents=ent_ix, quals=quals_ix)
+            return obj_preds, qual_preds
+        
+        return obj_preds
+        
+
