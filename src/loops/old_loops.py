@@ -17,12 +17,12 @@ def training_loop_gcn(
         device: torch.device = torch.device('cpu'),
         data_fn: Callable = SimplestSampler,
         val_testbench: Callable = default_eval,
-        # test_testbench: Callable = default_eval,
         eval_every: int = 1,
-        qualifier_aware: bool = False,
         grad_clipping: bool = True,
         early_stopping: int = 3,
-        scheduler: Callable = None
+        scheduler: Callable = None,
+        aux_train: bool = False,
+        aux_weight: float = 0.5
     ):
     """
     A fn which can be used to train a language model.
@@ -43,8 +43,9 @@ def training_loop_gcn(
     :param data_fn: Something that can make iterators out of training data (think mytorch samplers)
     :param val_testbench: Function call to see generate all negs for all pos and get metrics in valid set
     :param eval_every: int which dictates after how many epochs should run testbenches
+    :param scheduler: LR scheduler (torch.optim.lr_scheduler)
+    :param aux_train: Whether to include auxillary training task
     """
-
     train_loss = []
     train_acc = []
     valid_acc = []
@@ -68,21 +69,35 @@ def training_loop_gcn(
             for batch in tqdm(trn_dl):
                 opt.zero_grad()
 
-                triples, labels = batch
-                sub, rel = triples[:, 0], triples[:, 1]
-                if qualifier_aware:
-                    quals = triples[:, 2:]
-                    _quals = torch.tensor(quals, dtype=torch.long, device=device)
-                #sub, rel, obj, label = batch[:, 0], batch[:, 1], batch[:, 2], torch.ones((batch.shape[0], 1), dtype=torch.float)
+                if aux_train:
+                    triples, obj_labels, qual_stmts, qual_labels = batch
+                else:
+                    triples, obj_labels = batch
+
+                # Standard batch info
+                sub, rel, quals = triples[:, 0], triples[:, 1], triples[:, 2:]
                 _sub = torch.tensor(sub, dtype=torch.long, device=device)
                 _rel = torch.tensor(rel, dtype=torch.long, device=device)
-                _labels = torch.tensor(labels, dtype=torch.float, device=device)
+                _quals = torch.tensor(quals, dtype=torch.long, device=device)
+                _obj_labels  = torch.tensor(obj_labels, dtype=torch.float, device=device)
 
-                pred = model(_sub, _rel, _quals)
-                loss = model.loss(pred, _labels)
+                # Returns (s, r, o, Q-Pairs w/o qv) 
+                if aux_train:
+                    sub_q, rel_q, obj, quals_wo_pair = qual_stmts[:, 0], qual_stmts[:, 1], qual_stmts[:, 2], qual_stmts[:, 3:]
+                    _sub_q = torch.tensor(sub_q, dtype=torch.long, device=device)
+                    _rel_q = torch.tensor(rel_q, dtype=torch.long, device=device)
+                    _obj = torch.tensor(obj, dtype=torch.long, device=device)
+                    _quals_wo_pair = torch.tensor(quals_wo_pair, dtype=torch.long, device=device)
+                    _qual_labels = torch.tensor(qual_labels, dtype=torch.float, device=device)
 
-                per_epoch_loss.append(loss.item())
+                if aux_train:
+                    obj_preds, qual_preds = model(_sub, _rel, _quals, _sub_q, _rel_q, _obj, _quals_wo_pair)
+                    loss = (1 - aux_weight) * model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(qual_preds, _qual_labels)
+                else:
+                    pred = model(_sub, _rel, _quals)
+                    loss = model.loss(pred, _obj_labels)
                 
+                per_epoch_loss.append(loss.item())    
                 loss.backward()
 
                 if grad_clipping:
@@ -133,7 +148,6 @@ def training_loop_gcn(
                 if early_stopping is not None and len(valid_mrr) >= early_stopping and np.argmax(valid_mrr[-early_stopping:]) == 0:
                     print("Perforamance has not improved! Stopping now!")
                     break
-                    
         else:
             # No test benches this time around
             print("Epoch: %(epo)03d | Loss: %(loss).5f | Time_Train: %(time).3f min" 
@@ -141,11 +155,6 @@ def training_loop_gcn(
     
         if scheduler is not None:
             scheduler.step()
-
-
-    # Print Test Results
-    # print("\n\nTest Results:\n-------------\n")
-    # test_results = test_testbench()
 
     return train_acc, train_loss, \
            train_acc_bnchmk, train_mrr_bnchmk, \

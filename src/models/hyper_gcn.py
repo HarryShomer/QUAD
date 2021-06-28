@@ -1,8 +1,5 @@
 from .encoders import *
-
 from .transformers import *
-# from .old_transformers import *
-
 from utils.utils_gcn import *
 
 
@@ -78,7 +75,7 @@ class HypRelModel(nn.Module):
         return *self.index_embs(x, r, sub_ix, rel_ix, quals_ix), obj_emb
 
 
-    def forward(self, sub_ix, rel_ix, quals_ix, aux_sub_ix=None, aux_rel_ix=None, aux_obj_ix=None, quals_wo_pair_ix=None):
+    def forward(self, sub_ix, rel_ix, quals_ix, aux_sub_ix=None, aux_rel_ix=None, aux_obj_ix=None, aux_quals=None, aux_qual_mask=None):
         """
         1. Get embeddings (if bases or not)
         2. Forward each encoder
@@ -95,11 +92,11 @@ class HypRelModel(nn.Module):
         # Subject Prediction
         s_emb, r_emb, qe_emb, qr_emb = self.index_embs(x, r, sub_ix, rel_ix, quals_ix)
         obj_preds = self.decoder(s_emb, r_emb, qe_emb, qr_emb, x, sub_ix.shape, quals_ix=quals_ix)
-    
+
         # Qual Entity prediction if included
         if aux_obj_ix is not None:
-            s_emb, r_emb, qe_emb, qr_emb, o_emb = self.index_embs_aux(x, r, aux_sub_ix, aux_rel_ix, aux_obj_ix, quals_wo_pair_ix)
-            qual_preds = self.decoder(s_emb, r_emb, qe_emb, qr_emb, x, aux_sub_ix.shape, tail_embs=o_emb, quals_ix=quals_wo_pair_ix)
+            s_emb, r_emb, qe_emb, qr_emb, o_emb = self.index_embs_aux(x, r, aux_sub_ix, aux_rel_ix, aux_obj_ix, aux_quals)
+            qual_preds = self.decoder(s_emb, r_emb, qe_emb, qr_emb, x, aux_sub_ix.shape, quals_ix=aux_quals, tail_embs=o_emb, qual_mask=aux_qual_mask)
 
             return obj_preds, qual_preds
         

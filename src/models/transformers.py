@@ -1,5 +1,7 @@
+import math
 from utils.utils_gcn import *
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
+
 
 
 class Transformer(nn.Module):
@@ -20,17 +22,19 @@ class Transformer(nn.Module):
         self.p = params
         self.device = params['DEVICE']
 
+        self.src_mask = params['MODEL']['SRC_MASK']
+
         self.batch_size = params['BATCH_SIZE']
         self.hid_drop = params['MODEL']['TRANSFORMER_DROP']
         self.num_heads = params['MODEL']['T_N_HEADS']
         self.num_hidden = params['MODEL']['T_HIDDEN']
         self.emb_dim = params['EMBEDDING_DIM']
-        self.pooling = params['MODEL']['POOLING']  # min / avg / concat
+        self.pooling = params['MODEL']['POOLING']  # avg / concat
 
         encoder_layers = TransformerEncoderLayer(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
-
         self.encoder = TransformerEncoder(encoder_layers, params['MODEL']['T_LAYERS'])
-        self.position_embeddings = nn.Embedding(num_positions, self.emb_dim)
+
+        self.pos = nn.Embedding(num_positions, self.emb_dim)
 
 
 class TransformerDecoder(Transformer):
@@ -105,7 +109,7 @@ class TransformerDecoder(Transformer):
         stk_inp = self.concat(ent_embs, rel_emb, qual_rel_emb, qual_obj_emb)
 
         positions = torch.arange(stk_inp.shape[0], dtype=torch.long, device=self.device).repeat(stk_inp.shape[1], 1)
-        pos_embeddings = self.position_embeddings(positions).transpose(1, 0)
+        pos_embeddings = self.pos(positions).transpose(1, 0)
         stk_inp = stk_inp + pos_embeddings
 
         # Mask qualifier pairs that are empty
@@ -141,6 +145,7 @@ class MaskedTransformerDecoder(Transformer):
         self.fc = torch.nn.Linear(self.emb_dim, self.emb_dim)
 
 
+
     def concat(self, head_embs, rel_embed, qual_rel_embed, qual_obj_embed, mask_embs, mask_pos, tail_embs=None):
         """
         Concat all to be passed to Transformer
@@ -148,73 +153,85 @@ class MaskedTransformerDecoder(Transformer):
         rel_embed = rel_embed.view(-1, 1, self.emb_dim)
         head_embs = head_embs.view(-1, 1, self.emb_dim)
         mask_embs = mask_embs.view(-1, 1, self.emb_dim)
-        tail_embs = tail_embs.view(-1, 1, self.emb_dim) if mask_pos == -1 else None
-
-        # When mask_pos = -1, for each sequence we have 6 qr and 5 qv. So in order for this to work we
-        # temporarily add along the 1st dimension for qv
-        if mask_pos == -1:
-            z = torch.zeros(qual_obj_embed.shape[0], 1, qual_obj_embed.shape[2]).to(self.device)
-            qual_obj_embed = torch.cat([qual_obj_embed, z], 1)
+        tail_embs = tail_embs.view(-1, 1, self.emb_dim) if tail_embs is not None else None
 
         quals = torch.cat((qual_rel_embed, qual_obj_embed), 2)
         quals = quals.view(-1, 2 * qual_rel_embed.shape[1], qual_rel_embed.shape[2])
 
-        # Bec. of the previous addition we need to take it out. We know the sequence length should be 11
-        if mask_pos == -1:
-            quals = quals[:, :11, :]
-
-        if mask_pos == 2:
+        if tail_embs is None:
             stk_inp = torch.cat([head_embs, rel_embed, mask_embs, quals], 1).transpose(1, 0)
         else:
-            stk_inp = torch.cat([head_embs, rel_embed, tail_embs, quals, mask_embs], 1).transpose(1, 0)
+            stk_inp = torch.cat([head_embs, rel_embed, tail_embs, quals], 1)
+            stk_inp[range(stk_inp.shape[0]), mask_pos] = mask_embs.reshape(mask_embs.shape[0], mask_embs.shape[2])  # reshape since of form (a, 1, c)
+            stk_inp = stk_inp.transpose(1, 0)
         
         return stk_inp
 
 
-    def forward(self, head_embs, rel_emb, qual_obj_emb, qual_rel_emb, encoder_out, sample_shape, tail_embs=None, quals_ix=None):
+    def forward(self, head_embs, rel_emb, qual_obj_emb, qual_rel_emb, encoder_out, sample_shape, quals_ix=None, tail_embs=None, qual_mask=None):
         """
         1. Rearrange entity, rel, and quals
         2. Add positional
         3. Pass through transformer 
         """
-        mask_pos = 2 if tail_embs is None else -1 
+        batch_size = head_embs.shape[0]
 
-        # To insert in input
-        ent_mask = self.mask_emb.repeat(sample_shape[0], 1)
-
-        # Zeroes for mask to identify what to mask
-        ins = torch.zeros(sample_shape, dtype=torch.bool, device=self.device)
-
-        # Create mask and init as zeroes for empty quals.
-        # Option 1 (subject): [H, R, QR1, QV1, ..., QRN, QVN] -> NUM_QUALS + 2
-        # Option 2 (object):  [H, R, T, QR1, QV1, ..., QRN]   -> NUM_QUALS + 3
-        qual_offset = 3 if mask_pos == -1 else 2
-        mask = torch.zeros((sample_shape[0], quals_ix.shape[1] + qual_offset)).bool().to(self.device)
-        mask[:, qual_offset:] = quals_ix == 0
-
-        # When obj put in [h, r, <HERE>, qr1, qv2....qrn, qvn]
-        # Otherwise put at end for qual we are predicting [h, r, t, qr1, qv2....qrn, <HERE>]
-        if mask_pos == 2:
-            mask = torch.cat((mask[:, :2], ins.unsqueeze(1), mask[:, 2:]), axis=1)
+        if qual_mask is None:
+            mask_pos = torch.ones(sample_shape[0], dtype=torch.long, device=self.device) * 2   # 2 since subject
         else:
-            mask = torch.cat((mask, ins.unsqueeze(1)), axis=1)
+            mask_pos = qual_mask
+
+        # Mask empty quals
+        padding_mask = torch.zeros((sample_shape[0], self.seq_length)).bool().to(self.device)
+        padding_mask[:, 3:] = quals_ix == 0
+
+        # To insert in input sequence
+        input_mask = self.mask_emb.repeat(sample_shape[0], 1)
      
         # Returns Shape of (Sequence Len, Batch Size, Embedding Dim)
-        stk_inp = self.concat(head_embs, rel_emb, qual_rel_emb, qual_obj_emb, ent_mask, mask_pos, tail_embs)
+        stk_inp = self.concat(head_embs, rel_emb, qual_rel_emb, qual_obj_emb, input_mask, mask_pos, tail_embs)
 
+        # Add positional
         positions = torch.arange(stk_inp.shape[0], dtype=torch.long, device=self.device).repeat(stk_inp.shape[1], 1)
-        pos_embeddings = self.position_embeddings(positions).transpose(1, 0)
+        pos_embeddings = self.pos(positions).transpose(1, 0)
         stk_inp = stk_inp + pos_embeddings
 
-        # Last when qual otherwise index 2
-        x = self.encoder(stk_inp, src_key_padding_mask=mask)[mask_pos]
-        # x = torch.mean(x, dim=0)
+        # Add src_mask
+        # False = allowed to attend!
+        if self.src_mask:
+            mask = torch.zeros((batch_size, self.seq_length, self.seq_length), dtype=torch.bool, device=self.device)
+            for sample in range(mask.shape[0]):
+                mask[sample, :, mask_pos[sample]] = True
+                mask[sample, mask_pos[sample], mask_pos[sample]] = False
+
+            # Cat
+            head_masks = mask
+            for _ in range(self.num_heads - 1):
+                head_masks = torch.cat((head_masks, mask))
+
+            # Alternate
+            # head_masks = torch.empty((mask.shape[0] * self.num_heads, mask.shape[1], mask.shape[2]), device=self.device)
+            # for head in range(self.num_heads):
+            #     head_masks[head::self.num_heads, :] = mask
+
+            x = self.encoder(stk_inp, mask=head_masks, src_key_padding_mask=padding_mask)
+        else:
+            x = self.encoder(stk_inp, src_key_padding_mask=padding_mask)
+
+        if self.pooling == "concat":
+            # Take correct mask position for each sample
+            x = x.transpose(1, 0)
+            x = x[range(x.shape[0]), mask_pos]
+        else:
+            x = torch.mean(x, dim=0)
+    
         x = self.fc(x)
 
         x = torch.mm(x, encoder_out.transpose(1, 0))
         scores = torch.sigmoid(x)
 
         return scores
+
 
 
 
@@ -239,7 +256,7 @@ class TransformerTriplets(Transformer):
         stk_inp   = torch.cat([head_ents, rels, tail_ents], 1).transpose(1, 0)
 
         positions = torch.arange(stk_inp.shape[0], dtype=torch.long, device=self.device).repeat(stk_inp.shape[1], 1)
-        pos_embeddings = self.position_embeddings(positions).transpose(1, 0)
+        pos_embeddings = self.pos(positions).transpose(1, 0)
         stk_inp = stk_inp + pos_embeddings
         
         x = self.encoder(stk_inp)
@@ -250,31 +267,5 @@ class TransformerTriplets(Transformer):
         x = self.fc(x)
 
         return x
-
-
-
-# class TransformerQualifiers(Transformer):
-#     """
-#     Transformer to encode qualifier pairs
-#     """
-#     def __init__(self, params):
-#         super().__init__(params, params['MAX_QPAIRS'] - 3) # 3 because subtract possible base triplet embeddings
-
-    
-#     def forward(self, qual_rel_embed, qual_obj_embed):
-#         """
-#         """
-#         quals = torch.cat((qual_rel_embed, qual_obj_embed), 2)
-#         quals = quals.view(-1, 2 * qual_rel_embed.shape[1], qual_rel_embed.shape[2])
-#         stk_inp = quals.transpose(1, 0)
-
-#         positions = torch.arange(stk_inp.shape[0], dtype=torch.long, device=self.device).repeat(stk_inp.shape[1], 1)
-#         pos_embeddings = self.position_embeddings(positions).transpose(1, 0)
-#         stk_inp = stk_inp + pos_embeddings
-        
-#         x = self.encoder(stk_inp, src_key_padding_mask=mask)
-#         x = torch.mean(x, dim=0)
-
-#         return x
 
 

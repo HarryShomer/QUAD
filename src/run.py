@@ -6,10 +6,10 @@ from data_loaders.data_manager import DataManager
 from utils.utils import *
 from loops.evaluation import EvaluationBenchGNNMultiClass
 from loops.evaluation import acc, mrr, mr, hits_at
-# from loops.corruption import Corruption
 from loops.sampler import MultiClassSampler
 from loops.loops import training_loop_gcn
 from models.hyper_gcn import HypRelModel
+
 
 random.seed(42)
 np.random.seed(42)
@@ -30,26 +30,10 @@ DEFAULT_CONFIG = {
 
 # TODO: Add to Argparse
 MODEL_CONFIG = {
-    'TRIP_LAYERS': 2,
-    'QUAL_LAYERS': 2,
-
-    'N_BASES': 0,
     'GCN_DIM': 200,
-    'GCN_DROP': 0.1, 
-
-    # Used *after* conv layers
-    'ENCODER_DROP_1': 0.3,
-    'ENCODER_DROP_2': 0.3,
-
-    # For Transformer
-    'T_LAYERS': 2,
-    'T_N_HEADS': 4,
-    'T_HIDDEN': 512,
-    'TRANSFORMER_DROP': 0.1,
     'POSITIONAL': True,
-    'POS_OPTION': 'default',
-    'TIME': False,
-    'POOLING': 'avg',
+    #'POS_OPTION': 'default',
+    'TIME': False
 }
 
 ### Cmd Line Args!
@@ -57,31 +41,42 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("dataset", help="Dataset to run it on")
 parser.add_argument("--device", type=str, default='cuda')
+parser.add_argument("--clean-data", help="Only use for WD50K datasets", action='store_true', default=False) # False for WikiPeople and JF17K for original data
 parser.add_argument("--only-trips", help="Only do triplet aggregation", action='store_true', default=False)
 parser.add_argument("--test-on-val", help="When true testing done on val set. Otherwise we train on train+val and test on test set.", action='store_true', default=False)
+parser.add_argument("--val-every", help="Test on validation set every n epochs", type=int, default=5)
+parser.add_argument("--early-stopping", help="Number of validation scores to wait for an increase before stopping", default=None, type=int)
+
 parser.add_argument("--epochs", help="Number of epochs to run", default=500, type=int)
 parser.add_argument("--batch-size", help="Batch size to use for training", default=128, type=int)
 parser.add_argument("--lr", help="Learning rate to use while training", default=1e-4, type=float)
+parser.add_argument("--lr-decay", action='store_true', default=False)
+parser.add_argument("--lr-lambda", help="LR Decay", default=.9975, type=float)
 parser.add_argument("--dim", help="Latent dimension of entities and relations", type=int, default=200)
 parser.add_argument("--opn", help="Composition function", type=str, default="rotate")
-parser.add_argument("--val-every", help="Test on validation set every n epochs", type=int, default=5)
-parser.add_argument("--label-smoothing", default=.1, type=float)
-parser.add_argument("--lr-decay", action='store_true', default=False)
-parser.add_argument("--early-stopping", help="Number of validation scores to wait for an increase before stopping", default=None, type=int)
+parser.add_argument("--label-smooth", default=.1, type=float)
+
 parser.add_argument("--gcn-drop", help="Dropout for GCN", type=float, default=.1)
 parser.add_argument("--encoder-drop1", help="1st Dropout for encoder", default=.3, type=float)
 parser.add_argument("--encoder-drop2", help="2nd Dropout for encoder", default=.3, type=float)
-parser.add_argument("--trans-dim", help="Transformer hidden dimension", type=int, default=512)
+
 parser.add_argument("--fact-encoder", help="linear or transformer", type=str, default="linear")
 parser.add_argument("--qual-layers", help="Number of Layers in Qual Encoder", default=2, type=int)
-parser.add_argument("--lr-lambda", help="LR Decay", default=.9975, type=float)
-parser.add_argument("--alpha", help="Parameter for controlling flow of qualifier info", type=float, default=.7)
+parser.add_argument("--trip-layers", help="Number of Layers in Trip Encoder", default=2, type=int)
 
-# should be false for WikiPeople and JF17K for their original data
-parser.add_argument("--clean-data", help="Only use for WD50K datasets", action='store_true', default=False)
+parser.add_argument("--alpha", help="Parameter for controlling flow of qualifier info", type=float, default=.7)
+parser.add_argument("--qual-comb", help="How to combine qual information in trip encoder. One of ['none', 'both', 'ent', 'rel', 'out']", type=str, default='out')
+
+parser.add_argument("--trans-dim", help="Transformer hidden dimension", type=int, default=512)
+parser.add_argument("--trans-drop", help="Dropout for transformer", default=.1, type=float)
+parser.add_argument("--trans-pool", help="Pooling used for Transformer. Either 'avg' or 'concat'", type=str, default="concat")
+parser.add_argument("--trans-layers", help="Transformer layers", type=int, default=2)
+parser.add_argument("--trans-heads", help="Transformer layersheads", type=int, default=4)
 
 parser.add_argument("--aux", help="Include auxillary training task", action='store_true', default=False)
-parser.add_argument("--aux-weight", help="Weight for aux loss", type=float, default=.5)
+parser.add_argument("--aux-weight", help="Weight for aux loss", type=float, default=1)
+parser.add_argument("--src-mask", action='store_true', default=False)
+parser.add_argument("--aux-label-smooth", default=.1, type=float)
 
 
 cmd_args = parser.parse_args()
@@ -96,7 +91,8 @@ DEFAULT_CONFIG['EMBEDDING_DIM'] = cmd_args.dim
 DEFAULT_CONFIG['EPOCHS'] = cmd_args.epochs 
 DEFAULT_CONFIG['EVAL_EVERY'] = cmd_args.val_every
 DEFAULT_CONFIG['LEARNING_RATE'] = cmd_args.lr
-DEFAULT_CONFIG['LABEL_SMOOTHING'] = cmd_args.label_smoothing
+DEFAULT_CONFIG['LABEL_SMOOTHING'] = cmd_args.label_smooth
+DEFAULT_CONFIG['AUX_LABEL_SMOOTHING'] = cmd_args.aux_label_smooth
 DEFAULT_CONFIG['CLEANED_DATASET'] = cmd_args.clean_data
 DEFAULT_CONFIG['LR_SCHEDULER'] = cmd_args.lr_decay
 DEFAULT_CONFIG['EARLY_STOPPING'] = cmd_args.early_stopping
@@ -105,11 +101,18 @@ DEFAULT_CONFIG['ALPHA'] = cmd_args.alpha
 DEFAULT_CONFIG['AUX_WEIGHT'] = cmd_args.aux_weight
 DEFAULT_CONFIG['FACT_ENCODER'] = cmd_args.fact_encoder.lower()
 DEFAULT_CONFIG['MODEL']['OPN'] = cmd_args.opn
-DEFAULT_CONFIG['MODEL']['ENCODER_DROP_2'] = cmd_args.encoder_drop1
-DEFAULT_CONFIG['MODEL']['ENCODER_DROP_1'] = cmd_args.encoder_drop2
+DEFAULT_CONFIG['MODEL']['ENCODER_DROP_1'] = cmd_args.encoder_drop1
+DEFAULT_CONFIG['MODEL']['ENCODER_DROP_2'] = cmd_args.encoder_drop2
 DEFAULT_CONFIG['MODEL']['T_HIDDEN'] = cmd_args.trans_dim
 DEFAULT_CONFIG['MODEL']['GCN_DROP'] = cmd_args.gcn_drop
 DEFAULT_CONFIG['MODEL']['QUAL_LAYERS'] = cmd_args.qual_layers
+DEFAULT_CONFIG['MODEL']['TRIP_LAYERS'] = cmd_args.trip_layers
+DEFAULT_CONFIG['MODEL']['TRANSFORMER_DROP'] = cmd_args.trans_drop
+DEFAULT_CONFIG['MODEL']['POOLING'] = cmd_args.trans_pool.lower()
+DEFAULT_CONFIG['MODEL']['SRC_MASK'] = cmd_args.src_mask
+DEFAULT_CONFIG['MODEL']['QUAL_COMB'] = cmd_args.qual_comb.lower()
+DEFAULT_CONFIG['MODEL']['T_LAYERS'] = cmd_args.trans_layers
+DEFAULT_CONFIG['MODEL']['T_N_HEADS'] = cmd_args.trans_heads
 
 
 def get_data(config):
@@ -193,12 +196,12 @@ def main():
         tr_data     = {'train': combine(train_data, valid_data), 'valid': ev_val_data['eval']}
     else:
         ev_val_data = {'index': combine(train_data, test_data), 'eval': combine(valid_data)}
-        tr_data    = {'train': combine(train_data), 'valid': ev_val_data['eval']}
+        tr_data     = {'train': combine(train_data), 'valid': ev_val_data['eval']}
 
     eval_metrics = [acc, mrr, mr, partial(hits_at, k=3), partial(hits_at, k=5), partial(hits_at, k=10)]
 
     sampler = MultiClassSampler(data= tr_data['train'], n_entities=config['NUM_ENTITIES'], lbl_smooth=config['LABEL_SMOOTHING'],
-                                bs=config['BATCH_SIZE'], aux_train=config['AUX_TRAIN'])
+                                bs=config['BATCH_SIZE'], aux_train=config['AUX_TRAIN'], aux_lbl_smooth=config['AUX_LABEL_SMOOTHING'])
 
     evaluation_valid = EvaluationBenchGNNMultiClass(ev_val_data, model, bs=config['BATCH_SIZE'], metrics=eval_metrics,
                                                     filtered=True, n_ents=config['NUM_ENTITIES'],

@@ -23,6 +23,7 @@ class CompGCNConv(MessagePassing):
         self.num_rels     = num_rels
         self.act          = act
         self.opn          = params['MODEL']['OPN']
+        self.qual_comb    = params['MODEL']['QUAL_COMB']
         self.device       = None
 
         # Weight of both comp functions in 'both' aggregate
@@ -173,10 +174,9 @@ class CompGCNConv(MessagePassing):
 
 
 
-
     def message(self, x_i, x_j, edge_type, rel_embed, edge_norm, mode, ent_embed=None, qualifier_ent=None, 
                 qualifier_rel=None, qual_index=None, prop_type=None, trip_obj_ix=None, trip_rel_ix=None
-                ):
+        ):
         """
         Define message for MessagePassing class
 
@@ -191,40 +191,18 @@ class CompGCNConv(MessagePassing):
         comp_weight_matrix = getattr(self, 'w_{}'.format(mode))
 
         # Get relations embs used in sample
-        rel_sub_embs = torch.index_select(rel_embed, 0, edge_type)
+        base_rel_embs = torch.index_select(rel_embed, 0, edge_type)
 
         if mode == "loop":
-            comp_agg = self.comp_func(x_j, rel_sub_embs)
+            comp_agg = self.comp_func(x_j, base_rel_embs)
         elif prop_type == "trip":
-            # phi(u, r)
-            trip_agg = self.combine_trips(x_j, rel_sub_embs)
-            
-            # phi(qv, qr) and sum by base triplet
-            qual_comp = self.comp_func(ent_embed[qualifier_ent], rel_embed[qualifier_rel])
-            qual_coalesce = scatter_add(qual_comp, qual_index, dim=0, dim_size=rel_sub_embs.shape[0])
-
-            # h_q
-            qualifier_emb = torch.mm(qual_coalesce, self.w_q)
-   
-            #######################
-            # If trip has at least one qualifier -> 1 if True else 0
-            # ones = torch.ones(qual_index.shape[0]).to(self.device)
-            # trip_has_qual = scatter_min(ones, qual_index, dim=0, dim_size=rel_sub_embs.shape[0])[0]
-
-            # # Expand for emb dimension
-            # trip_has_qual = trip_has_qual.repeat(self.emb_dim, 1).transpose(0, 1)
-            # comp_agg = torch.where(trip_has_qual == 0, trip_agg, self.alpha * trip_agg + (1 - self.alpha) * qualifier_emb)
-            #######################
-
-            # Combine with phi_r(u, r)
-            comp_agg = self.alpha * trip_agg + (1 - self.alpha) * qualifier_emb  
-
+            qual_ent_embed = ent_embed[qualifier_ent]
+            qual_rel_embed = rel_embed[qualifier_rel]
+            comp_agg = self.combine_trips(x_j, base_rel_embs, qual_ent_embed, qual_rel_embed, qual_index)
         elif prop_type == "qual":
             trip_rel_embed = rel_embed[trip_rel_ix]
             trip_obj_embed = ent_embed[trip_obj_ix]
-
-            comp_agg = self.combine_quals(x_j, rel_sub_embs, trip_obj_embed, trip_rel_embed, mode)
-
+            comp_agg = self.combine_quals(x_j, base_rel_embs, trip_obj_embed, trip_rel_embed)
 
         out = torch.mm(comp_agg, comp_weight_matrix)
 
@@ -232,15 +210,63 @@ class CompGCNConv(MessagePassing):
         return out if edge_norm is None else out * edge_norm.view(-1, 1)
 
 
-
-    def combine_trips(self, x_j, rel_sub_embs):
+    def combine_trips(self, x_j, base_rel_embs, qual_ent_embs, qual_rel_embs, qual_to_trip_ix):
         """
-        Combine the basic triplet info and sum for given head entity
-        """
-        return self.comp_func(x_j, rel_sub_embs)
+        Combine the basic triplet info and sum for given head entity.
+
+        Options based on value of self.qual_comb:
+
+        1. 'none': phi(h_u, h_r)
+        2. 'out':  a *  phi(h_u, h_r) + (1 - a) * h_q
+        3. 'ent':  phi(a * h_u + (1 - a) * h_q, h_r)
+        4. 'rel':  phi(h_u, a * h_r + (1 - a) * h_q)
+        5. 'both': phi(a * h_u + (1 - a) * h_q, a * h_r + (1 - a) * h_q)
+        """        
+        # No inlusion of qual info
+        if self.qual_comb == "none":
+            return self.comp_func(x_j, base_rel_embs)
+        
+        # phi(qv, qr) and sum by base triplet
+        qual_comp = self.comp_func(qual_ent_embs, qual_rel_embs)
+        qual_coalesce = scatter_add(qual_comp, qual_to_trip_ix, dim=0, dim_size=base_rel_embs.shape[0])
+
+        # h_q
+        qualifier_emb = torch.mm(qual_coalesce, self.w_q)
+
+        #######################
+        # If trip has at least one qualifier -> 1 if True else 0
+        # ones = torch.ones(qual_index.shape[0]).to(self.device)
+        # trip_has_qual = scatter_min(ones, qual_index, dim=0, dim_size=base_rel_embs.shape[0])[0]
+
+        # # Expand for emb dimension
+        # trip_has_qual = trip_has_qual.repeat(self.emb_dim, 1).transpose(0, 1)
+        # comp_agg = torch.where(trip_has_qual == 0, trip_agg, self.alpha * trip_agg + (1 - self.alpha) * qualifier_emb)
+        #######################
+
+        if self.qual_comb == "ent":
+            x_j = self.alpha * x_j + (1 - self.alpha) * qualifier_emb 
+            comp_agg = self.comp_func(x_j, base_rel_embs)
+
+        elif self.qual_comb == "rel":
+            base_rel_embs = self.alpha * base_rel_embs + (1 - self.alpha) * qualifier_emb 
+            comp_agg = self.comp_func(x_j, base_rel_embs)
+
+        elif self.qual_comb == "both":
+            x_j = self.alpha * x_j + (1 - self.alpha) * qualifier_emb 
+            base_rel_embs = self.alpha * base_rel_embs + (1 - self.alpha) * qualifier_emb 
+            comp_agg = self.comp_func(x_j, base_rel_embs)
+  
+        elif self.qual_comb == "out":
+            trip_agg = self.comp_func(x_j, base_rel_embs)
+            comp_agg = self.alpha * trip_agg + (1 - self.alpha) * qualifier_emb 
+        else:
+            raise ValueError("Invalid value for argument --qual-comb")
 
 
-    def combine_quals(self, x_j, rel_embed, trip_obj_embed, trip_rel_embed, mode):
+        return comp_agg 
+
+
+    def combine_quals(self, x_j, rel_embed, trip_obj_embed, trip_rel_embed):
         """
         For a given input combine the qualifier and triplet info
         
@@ -304,26 +330,3 @@ class CompGCNConv(MessagePassing):
         norm = deg_inv[row] * edge_weight * deg_inv[col] # D^{-0.5}
 
         return norm
-
-
-    # def qual_inverse_edges(self, inv_edge_index, quals):
-    #     """
-    #     Create inverse edges for prop_type 'qual'
-    #     """        
-    #     num_quals = quals.size(1) // 2
-    #     new_edge_index = torch.zeros(2, num_quals, dtype=torch.int64).to(self.device)
-
-    #     # Head and relation for new inv triplets
-    #     # Do + num_rels to get inverse of relations        
-    #     quals_ent_out_index = quals[1, num_quals:]
-    #     quals_rel_out_index = quals[0, num_quals:] + self.num_rels
-        
-    #     # Tail of inverse parent triplet...so our final tail indices
-    #     quals_parent_out_index = quals[2, num_quals:]
-    #     inv_tails = inv_edge_index[1][quals_parent_out_index]
-
-    #     new_edge_index[0] = quals_ent_out_index
-    #     new_edge_index[1] = inv_tails
-
-    #     return new_edge_index, quals_rel_out_index
-

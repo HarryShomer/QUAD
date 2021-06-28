@@ -30,16 +30,15 @@ class EvaluationBenchGNNMultiClass:
                  trim: float = None,
                  positions: List[int] = None):
         """
-            :param data: {'index': list/iter of positive triples, 'eval': list/iter of positive triples}.
-            Np array are appreciated
-            :param model: the nn module we're testing
-            :param excluding_entities: either an int (indicating n_entities), or a array of possible negative entities
-            :param bs: anything under 256 is shooting yourself in the foot.
-            :param metrics: a list of callable (from methods in this file) we call to get a metric
-            :param filtered: if you want corrupted triples checked.
-            :param trim: We could drop the 'eval' data, to speed things up
-            :param positions: which positions should we inflect.
-            """
+        :param data: {'index': list/iter of positive triples, 'eval': list/iter of positive triples}.
+        :param model: the nn module we're testing
+        :param excluding_entities: either an int (indicating n_entities), or a array of possible negative entities
+        :param bs: anything under 256 is shooting yourself in the foot.
+        :param metrics: a list of callable (from methods in this file) we call to get a metric
+        :param filtered: if you want corrupted triples checked.
+        :param trim: We could drop the 'eval' data, to speed things up
+        :param positions: which positions should we inflect.
+        """
         self.bs, self.filtered = bs, filtered
         self.model = model
         self.data_eval = data['eval']
@@ -59,6 +58,7 @@ class EvaluationBenchGNNMultiClass:
             assert trim <= 1.0, "Trim ratio can not be more than 1.0"
             self.data_eval = np.random.permutation(self.data_eval)[:int(trim * len(self.data_eval))]
 
+
     def build_index(self):
         """
         the index is comprised of both INDEX and EVAL parts of the dataset
@@ -72,9 +72,7 @@ class EvaluationBenchGNNMultiClass:
 
         for statement in np.concatenate((self.data['index'], self.data['eval']), axis=0):
             s, r, o, quals = statement[0], statement[1], statement[2], statement[3:] if self.data['eval'].shape[1] >= 3 else None
-            reci_rel = r + self.config['NUM_RELATIONS']
             self.index[(s, r, *quals)].append(o) if self.config['SAMPLER_W_QUALIFIERS'] else self.index[(s, r)].append(o)
-            # self.index[(o, reci_rel, *quals)].append(s) if self.config['SAMPLER_W_QUALIFIERS'] else self.index[(o, reci_rel)].append(s)
 
         for k, v in self.index.items():
             self.index[k] = list(set(v))
@@ -126,12 +124,10 @@ class EvaluationBenchGNNMultiClass:
             result[k] = (left[k] + right[k]) / 2.0 if k != 'count' else v
 
         return result
+
     @staticmethod
     def summarize_run(summary: dict):
         """ Nicely print what just went down """
-        # print(f"This run over {summary['data_length']} datapoints took "
-        #       f"%(time).3f min" % {'time': summary['time_taken'] / 60.0}, flush=True)
-        # print("---------\n", flush=True)
 
         print('Object prediction results', flush=True)
         for k, v in summary['left'].items():
@@ -146,6 +142,7 @@ class EvaluationBenchGNNMultiClass:
         print('Overall prediction results', flush=True)
         for k, v in summary['metrics'].items():
             print(k, ':', "%(v).4f" % {'v': v}, flush=True)
+
 
     def compute(self, pred, obj, label, results):
         """
@@ -185,16 +182,17 @@ class EvaluationBenchGNNMultiClass:
         results['count'] = torch.numel(ranks) + results.get('count', 0.0)
         results['mr'] = torch.sum(ranks).item() + results.get('mr', 0.0)
         results['mrr'] = torch.sum(1.0 / ranks).item() + results.get('mrr', 0.0)
+        
         for k in [0, 2, 4, 9]:
-            results['hits_at {}'.format(k + 1)] = torch.numel(ranks[ranks <= (k + 1)]) + results.get(
-                'hits_at {}'.format(k + 1), 0.0)
+            results['hits_at {}'.format(k + 1)] = torch.numel(ranks[ranks <= (k + 1)]) + results.get('hits_at {}'.format(k + 1), 0.0)
+
         return results
+
 
     def run(self, *args, **kwargs):
         """
-            Calling this iterates through different data points, obtains their labels,
-            passes them to the model,
-                collects the scores, computes the metrics, and reports them.
+        Calling this iterates through different data points, obtains their labels, passes them to the model,  
+        collects the scores, computes the metrics, and reports them.
         """
         metrics = []
         self.model.eval()
