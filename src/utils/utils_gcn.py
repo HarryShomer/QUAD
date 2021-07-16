@@ -12,6 +12,7 @@ import torch
 import torch_scatter
 import torch.nn as nn
 from torch.nn import Parameter
+import torch.nn.functional as F
 from torch.nn.init import xavier_normal_
 from torch_scatter import scatter_add, scatter_max
 

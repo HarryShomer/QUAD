@@ -79,24 +79,41 @@ def training_loop_gcn(
                 _sub = torch.tensor(sub, dtype=torch.long, device=device)
                 _rel = torch.tensor(rel, dtype=torch.long, device=device)
                 _quals = torch.tensor(quals, dtype=torch.long, device=device)
-                _obj_labels  = torch.tensor(obj_labels, dtype=torch.float, device=device)
+                _obj_labels = torch.tensor(obj_labels, dtype=torch.float, device=device)
 
-                # Returns (s, r, o, Q-Pairs w/o qv) 
                 if aux_train:
-                    sub_q, rel_q, obj, quals_wo_pair = qual_stmts[:, 0], qual_stmts[:, 1], qual_stmts[:, 2], qual_stmts[:, 3:]
-                    _sub_q = torch.tensor(sub_q, dtype=torch.long, device=device)
-                    _rel_q = torch.tensor(rel_q, dtype=torch.long, device=device)
-                    _obj = torch.tensor(obj, dtype=torch.long, device=device)
-                    _quals_wo_pair = torch.tensor(quals_wo_pair, dtype=torch.long, device=device)
+                    sub_q, rel_q, obj, qual_ix, quals_q = qual_stmts[:, 0], qual_stmts[:, 1], qual_stmts[:, 2], qual_stmts[:, 3], qual_stmts[:, 4:16]
+
+                    _sub_q = torch.tensor(sub_q.astype(int), dtype=torch.long, device=device)
+                    _rel_q = torch.tensor(rel_q.astype(int), dtype=torch.long, device=device)
+                    _obj = torch.tensor(obj.astype(int), dtype=torch.long, device=device)
+
+                    _quals_q = torch.tensor(quals_q.astype(int), dtype=torch.long, device=device)
+
+                    # Position in sequence of qual entity. +3 is to account for base trip indices
+                    _qual_ix = torch.tensor(qual_ix.astype(int), dtype=torch.long, device=device) + 3
+
                     _qual_labels = torch.tensor(qual_labels, dtype=torch.float, device=device)
+                
 
+                # with open("wd50k_100_trip_batch.txt", "w") as f:
+                #     for i in range(len(_sub)):
+                #         f.write(f"{_sub[i] : <8}  |  {_rel[i] : <8}  | {', '.join(str(e) for e in _quals[i].tolist()) : <60}  | {[j[0] for j in _obj_labels[i].nonzero().tolist()]}")
+                #         f.write("\n")
+
+                # with open("wd50k_100_qual_batch.txt", "w") as f:
+                #     for i in range(len(_sub_q)):
+                #         f.write(f"{_sub_q[i] : <8}  |  {_rel_q[i] : <8}  |  {_obj[i] : < 8}  |  {', '.join(str(e) for e in _quals_q[i].tolist()) : <60}  | {_qual_ix[i] : < 5}  |  {[j[0] for j in _qual_labels[i].nonzero().tolist()]}")
+                #         f.write("\n")
+                
+                
                 if aux_train:
-                    obj_preds, qual_preds = model(_sub, _rel, _quals, _sub_q, _rel_q, _obj, _quals_wo_pair)
-                    loss = (1 - aux_weight) * model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(qual_preds, _qual_labels)
+                    obj_preds, qual_preds = model(_sub, _rel, _quals, _sub_q, _rel_q, _obj, _quals_q, _qual_ix)
+                    loss =  model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(qual_preds, _qual_labels)
                 else:
                     pred = model(_sub, _rel, _quals)
                     loss = model.loss(pred, _obj_labels)
-                
+                                
                 per_epoch_loss.append(loss.item())    
                 loss.backward()
 

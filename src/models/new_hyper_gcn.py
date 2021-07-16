@@ -1,4 +1,4 @@
-from .encoders import *
+from .new_encoders import *
 from .transformers import *
 from utils.utils_gcn import *
 
@@ -17,16 +17,20 @@ class HypRelModel(nn.Module):
         self.num_rel   = config['NUM_RELATIONS']
         self.emb_dim   = config['EMBEDDING_DIM']
 
-        self.ent_skip_matrix = get_param((self.emb_dim * 2, self.emb_dim))
+        #self.ent_skip_matrix = get_param((self.emb_dim * 2, self.emb_dim))
 
         self.ent_embs = get_param((self.num_ent, self.emb_dim))
         self.rel_embs = self.get_rel_emb()
 
-        self.trip_encoder = HypRelEncoder(data, config, config['MODEL']['TRIP_LAYERS'])
-        self.trip_encoder.to(self.device)
+        # self.trip_encoder = HypRelEncoder(data, config, config['MODEL']['TRIP_LAYERS'])
+        # self.trip_encoder.to(self.device)
 
-        self.qual_encoder = HypRelEncoder(data, config, config['MODEL']['QUAL_LAYERS'], qual=True)
-        self.qual_encoder.to(self.device)
+        # self.qual_encoder = HypRelEncoder(data, config, config['MODEL']['QUAL_LAYERS'], qual=True)
+        # self.qual_encoder.to(self.device)
+
+        self.hyp_encoder = HypRelEncoder(data, config, config['MODEL']['TRIP_LAYERS'], qual=True)
+        self.hyp_encoder.to(self.device)
+
 
         self.decoder = MaskedTransformerDecoder(config) if self.mask else TransformerDecoder(config)
         self.decoder.to(self.device)
@@ -87,16 +91,7 @@ class HypRelModel(nn.Module):
         init_rel = self.rel_embs
         aux_ent_preds, aux_rel_preds = None, None
 
-        x1, r1 = self.trip_encoder("trip", init_ent, init_rel)
-
-        if not self.config['ONLY-TRIPS']:
-            x, r = self.qual_encoder("qual", x1, r1)
-
-            if self.config['MODEL']['SKIP']:
-                concat_ent = torch.cat((x1, x), dim=1)
-                x = torch.matmul(concat_ent, self.ent_skip_matrix)
-        else:
-            x, r = x1, r1
+        x, r = self.hyp_encoder(init_ent, init_rel)
 
         # Subject Prediction
         s_emb, r_emb, qe_emb, qr_emb = self.index_embs(x, r, sub_ix, rel_ix, quals_ix)

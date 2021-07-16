@@ -13,7 +13,7 @@ class MultiClassSampler:
         Each row contains 1s (or lbl-smth values) if the triple exists in the training set
         So given the triples (0, 0, 1), (0, 0, 4) the label vector will be [0, 1, 0, 0, 1]
     """
-    def __init__(self, data: Union[np.array, list], n_entities: int, lbl_smooth: float = 0.0, bs: int = 64, aux_train=False):
+    def __init__(self, data: Union[np.array, list], n_entities: int, lbl_smooth: float = 0.0, bs: int = 64, aux_train=False, aux_lbl_smooth = 0):
         """
 
         :param data: data as an array of statements of STATEMENT_LEN, e.g., [0,0,0] or [0,1,0,2,4]
@@ -26,6 +26,7 @@ class MultiClassSampler:
         self.data = data
         self.n_entities = n_entities
         self.lbl_smooth = lbl_smooth
+        self.aux_lbl_smooth = aux_lbl_smooth
         self.aux_train = aux_train
 
         # Creates self.obj_index -> See `build_index` for explanation
@@ -56,9 +57,9 @@ class MultiClassSampler:
                keys -> (s, r, o, quals, *quals*). Ex: (11240, 556, 11285, ****)
                vals -> List of possible qv entities. Ex: [2185, 6042]
         
-        3. self.qual_index = = defaultdict
+        3. self.qual_index = defaultdict
             keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            vals -> List of possible [o, quals_wo_pair, qv]
+            vals -> List of possible [o, quals_wo_pair, qv, qv_ix]
         """
         self.obj_index = defaultdict(list)
         self.qual_index = defaultdict(list)
@@ -76,16 +77,12 @@ class MultiClassSampler:
                     # [2,6,3,7,4,8,0,0,0,0,0,0] -> [2,6,4,8,0,0,0,0,0,0,3] & 7
                     quals_wo_pair = np.array([quals[j] for j in range(len(quals)) if j not in [qr_ix, qv_ix]] + [quals[qr_ix]])
 
-                    self.qual_index[(s, r, *quals)].append([o, quals_wo_pair, quals[qv_ix]])
-                    self.qual_label_index[(s, r, o, *quals_wo_pair)].append(quals[qv_ix])
+                    self.qual_index[(s, r, *quals)].append([o, quals_wo_pair, qv_ix])
+                    self.qual_label_index[(s, r, o, *quals_wo_pair)].append(quals[qv_ix])                    
 
         # Remove duplicates in the objects list for convenience
         for k, v in self.obj_index.items():
             self.obj_index[k] = list(set(v))
-        # for k, v in self.qual_index.items():
-        #     self.qual_index[k] = list(set(v))
-        # for k, v in self.qual_label_index.items():
-        #     self.qual_index[k] = list(set(v))
 
 
     def reset(self, *ignore_args):
@@ -93,7 +90,6 @@ class MultiClassSampler:
         Reset the pointers of the iterators at the end of an epoch
         :return:
         """
-        # do something
         self.i = 0
         self.shuffle()
 
@@ -120,7 +116,7 @@ class MultiClassSampler:
 
         for i, s in enumerate(statements):
             s, r, quals = s[0], s[1], s[2:] if self.data.shape[1] > 3 else None
-            lbls = self.obj_index[(s, r, *quals)] #if self.with_q else self.obj_index[(s,r)]
+            lbls = self.obj_index[(s, r, *quals)]
             y[i, lbls] = 1.0
 
         if self.lbl_smooth != 0.0:
@@ -140,30 +136,34 @@ class MultiClassSampler:
         y = np.zeros((statements.shape[0], self.n_entities), dtype=np.float32)
 
         for i, s in enumerate(statements):
-            s, r, o, quals_wo_pair = s[0], s[1], s[2], s[3:]
+            s, r, o, quals_wo_pair = s[0], s[1], s[2], s[3 + 1 + 12:]  # 3 = s, r, o | 1 = qv_ix | 12 = 6 qual pairs
             lbls = self.qual_label_index[(s, r, o, *quals_wo_pair)]
             y[i, lbls] = 1.0
 
         if self.lbl_smooth != 0.0:
-            y = (1.0 - self.lbl_smooth)*y + (1.0 / self.n_entities)
+            y = (1.0 - self.aux_lbl_smooth)*y + (1.0 / self.n_entities)
 
         return y
 
 
+    # TODO: Merge this with labels?
     def get_qual_stmts(self, statements):
         """
         For a given list of object stmts get the appropriate qualifier statements
 
         :param statements: array of shape (bs, seq_len) like (64, 43)
 
-        :return list of [s, r, o,  quals_wo_pair]
+        :return list of [s, r, o, quals, qv_ix, quals_wo_pair]
         """
         qual_stmts = []
 
-        for s in statements:
-            for qs in self.qual_index[tuple(s)]:
-                qual_stmts.append([s[0], s[1], qs[0], *qs[1]])
-        
+        for stmt in statements:
+            s, r, quals = stmt[0], stmt[1], stmt[2:]
+
+            for qs in self.qual_index[tuple(stmt)]:
+                o, quals_wo_pair, qv_ix = qs[0], qs[1], qs[2]
+                qual_stmts.append([s, r, o, qv_ix, *quals, *quals_wo_pair])
+
         return np.array(qual_stmts)
 
 

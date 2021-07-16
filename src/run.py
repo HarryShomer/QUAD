@@ -8,7 +8,6 @@ from loops.evaluation import EvaluationBenchGNNMultiClass
 from loops.evaluation import acc, mrr, mr, hits_at
 from loops.sampler import MultiClassSampler
 from loops.loops import training_loop_gcn
-from models.hyper_gcn import HypRelModel
 
 
 random.seed(42)
@@ -72,16 +71,30 @@ parser.add_argument("--trans-drop", help="Dropout for transformer", default=.1, 
 parser.add_argument("--trans-pool", help="Pooling used for Transformer. Either 'avg' or 'concat'", type=str, default="concat")
 parser.add_argument("--trans-layers", help="Transformer layers", type=int, default=2)
 parser.add_argument("--trans-heads", help="Transformer layersheads", type=int, default=4)
+parser.add_argument("--mask", help="Explicit masking in transformer", action='store_true', default=False)
 
-parser.add_argument("--aux", help="Include auxillary training task", action='store_true', default=False)
+parser.add_argument("--aux-ent", help="Include auxillary entity training task", action='store_true', default=False)
+parser.add_argument("--aux-rel", help="Include auxillary relation training task", action='store_true', default=False)
 parser.add_argument("--aux-weight", help="Weight for aux loss", type=float, default=1)
-parser.add_argument("--src-mask", action='store_true', default=False)
-parser.add_argument("--aux-label-smooth", default=.1, type=float)
+parser.add_argument("--aux-ent-smooth", default=.1, type=float)
+parser.add_argument("--aux-rel-smooth", default=.1, type=float)
 
+
+parser.add_argument("--same-filter", action='store_true', default=False)
+parser.add_argument("--skip", action='store_true', default=False)
 
 cmd_args = parser.parse_args()
+
+
+if cmd_args.same_filter:
+    from models.new_hyper_gcn import HypRelModel
+else:
+    from models.hyper_gcn import HypRelModel
+
+
 DEFAULT_CONFIG['MODEL'] = MODEL_CONFIG
-DEFAULT_CONFIG['AUX_TRAIN'] = cmd_args.aux
+DEFAULT_CONFIG['AUX_ENT'] = cmd_args.aux_ent
+DEFAULT_CONFIG['AUX_REL'] = cmd_args.aux_rel
 DEFAULT_CONFIG['LAMBDA'] = cmd_args.lr_lambda
 DEFAULT_CONFIG['USE_TEST'] = not cmd_args.test_on_val
 DEFAULT_CONFIG['BATCH_SIZE'] = cmd_args.batch_size
@@ -92,7 +105,8 @@ DEFAULT_CONFIG['EPOCHS'] = cmd_args.epochs
 DEFAULT_CONFIG['EVAL_EVERY'] = cmd_args.val_every
 DEFAULT_CONFIG['LEARNING_RATE'] = cmd_args.lr
 DEFAULT_CONFIG['LABEL_SMOOTHING'] = cmd_args.label_smooth
-DEFAULT_CONFIG['AUX_LABEL_SMOOTHING'] = cmd_args.aux_label_smooth
+DEFAULT_CONFIG['AUX_ENT_SMOOTH'] = cmd_args.aux_ent_smooth
+DEFAULT_CONFIG['AUX_REL_SMOOTH'] = cmd_args.aux_rel_smooth
 DEFAULT_CONFIG['CLEANED_DATASET'] = cmd_args.clean_data
 DEFAULT_CONFIG['LR_SCHEDULER'] = cmd_args.lr_decay
 DEFAULT_CONFIG['EARLY_STOPPING'] = cmd_args.early_stopping
@@ -109,10 +123,11 @@ DEFAULT_CONFIG['MODEL']['QUAL_LAYERS'] = cmd_args.qual_layers
 DEFAULT_CONFIG['MODEL']['TRIP_LAYERS'] = cmd_args.trip_layers
 DEFAULT_CONFIG['MODEL']['TRANSFORMER_DROP'] = cmd_args.trans_drop
 DEFAULT_CONFIG['MODEL']['POOLING'] = cmd_args.trans_pool.lower()
-DEFAULT_CONFIG['MODEL']['SRC_MASK'] = cmd_args.src_mask
+DEFAULT_CONFIG['MODEL']['SRC_MASK'] = cmd_args.mask
 DEFAULT_CONFIG['MODEL']['QUAL_COMB'] = cmd_args.qual_comb.lower()
 DEFAULT_CONFIG['MODEL']['T_LAYERS'] = cmd_args.trans_layers
 DEFAULT_CONFIG['MODEL']['T_N_HEADS'] = cmd_args.trans_heads
+DEFAULT_CONFIG['MODEL']['SKIP'] = cmd_args.skip
 
 
 def get_data(config):
@@ -200,8 +215,10 @@ def main():
 
     eval_metrics = [acc, mrr, mr, partial(hits_at, k=3), partial(hits_at, k=5), partial(hits_at, k=10)]
 
-    sampler = MultiClassSampler(data= tr_data['train'], n_entities=config['NUM_ENTITIES'], lbl_smooth=config['LABEL_SMOOTHING'],
-                                bs=config['BATCH_SIZE'], aux_train=config['AUX_TRAIN'], aux_lbl_smooth=config['AUX_LABEL_SMOOTHING'])
+    sampler = MultiClassSampler(data= tr_data['train'], n_entities=config['NUM_ENTITIES'], n_rel=config['NUM_RELATIONS'], 
+                                lbl_smooth=config['LABEL_SMOOTHING'], bs=config['BATCH_SIZE'], aux_ent=config['AUX_ENT'], 
+                                aux_rel=config['AUX_REL'], aux_ent_smooth=config['AUX_ENT_SMOOTH'], aux_rel_smooth=config['AUX_REL_SMOOTH']
+                                )
 
     evaluation_valid = EvaluationBenchGNNMultiClass(ev_val_data, model, bs=config['BATCH_SIZE'], metrics=eval_metrics,
                                                     filtered=True, n_ents=config['NUM_ENTITIES'],
@@ -220,18 +237,18 @@ def main():
         "eval_every": config['EVAL_EVERY'],
         "grad_clipping": config['GRAD_CLIPPING'],
         "early_stopping": config['EARLY_STOPPING'],
-        #"scheduler": torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None
+        #"scheduler": torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None,
         "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda e: config['LAMBDA']**e) if config['LR_SCHEDULER'] else None,
-        "aux_train": config['AUX_TRAIN'],
+        "aux_ent": config['AUX_ENT'],
+        "aux_rel": config['AUX_REL'],
         "aux_weight": config['AUX_WEIGHT']
     }
 
-    print(f"Training on {config['NUM_ENTITIES']} entities and {config['NUM_RELATIONS']} relations!\n", flush=True)
+    print(f"Dataset has {config['NUM_ENTITIES']} entities and {config['NUM_RELATIONS']} relations!\n", flush=True)
 
     training_loop_gcn(**args)
     save_model(model, config['DATASET'])
     
-
 
 if __name__ == "__main__":
     main()

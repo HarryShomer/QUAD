@@ -159,6 +159,9 @@ class EvaluationBenchGNNMultiClass:
         """
         ignored_entities = self.excluding_entities  # remove qualifier only entities if the flag says so
 
+        if isinstance(pred, tuple):
+            pred = pred[0]
+
         b_range = torch.arange(pred.size()[0], device=self.config['DEVICE'])
         irrelevant = label.clone()
         irrelevant[b_range, obj] = 0            #

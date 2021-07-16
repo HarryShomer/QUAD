@@ -262,7 +262,6 @@ class CompGCNConv(MessagePassing):
         else:
             raise ValueError("Invalid value for argument --qual-comb")
 
-
         return comp_agg 
 
 

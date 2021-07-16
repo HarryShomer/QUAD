@@ -13,29 +13,42 @@ class MultiClassSampler:
         Each row contains 1s (or lbl-smth values) if the triple exists in the training set
         So given the triples (0, 0, 1), (0, 0, 4) the label vector will be [0, 1, 0, 0, 1]
     """
-    def __init__(self, data: Union[np.array, list], n_entities: int, lbl_smooth: float = 0.0, bs: int = 64, aux_train=False, aux_lbl_smooth = 0):
-        """
+    def __init__(self, 
+            data: Union[np.array, list], 
+            n_entities: int, 
+            n_rel: int, 
+            lbl_smooth: float = 0.1, 
+            bs: int = 64, 
+            aux_ent=False, 
+            aux_rel=False, 
+            aux_ent_smooth = 0.1,
+            aux_rel_smooth = 0.1
+        ):
 
-        :param data: data as an array of statements of STATEMENT_LEN, e.g., [0,0,0] or [0,1,0,2,4]
-        :param n_entities: total number of entities
-        :param lbl_smooth: whether to apply label smoothing used later in the BCE loss
-        :param bs: batch size
-        :param aux_train: Whether to include qual sampler
-        """
         self.bs = bs
         self.data = data
         self.n_entities = n_entities
+        self.n_rel = n_rel * 2  # inverse...
         self.lbl_smooth = lbl_smooth
-        self.aux_lbl_smooth = aux_lbl_smooth
-        self.aux_train = aux_train
+        self.aux_ent_smooth = aux_ent_smooth
+        self.aux_rel_smooth = aux_rel_smooth
+        self.aux_ent = aux_ent
+        self.aux_rel = aux_rel
 
-        # Creates self.obj_index -> See `build_index` for explanation
         self.build_index()
 
         # Keys = training samples/stmts w/o objects
         self.obj_keys = list(self.obj_index.keys())
 
         self.shuffle()
+
+
+    def __len__(self):
+        return len(self.obj_index) // self.bs
+
+    def __iter__(self):
+        self.i = 0
+        return self
 
 
     def shuffle(self):
@@ -49,25 +62,40 @@ class MultiClassSampler:
         """
         Creates following two objects:
 
-        1. self.obj_index = defaultdict
-               keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-               vals -> List of possible object entities. Ex: [2185, 6042]
-        
-        2. self.qual_label_index = defaultdict (see inline comments for more details)
-               keys -> (s, r, o, quals, *quals*). Ex: (11240, 556, 11285, ****)
-               vals -> List of possible qv entities. Ex: [2185, 6042]
-        
-        3. self.qual_index = defaultdict
-            keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-            vals -> List of possible [o, quals_wo_pair, qv, qv_ix]
+            1. self.obj_index = defaultdict
+                keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                vals -> List of possible object entities. Ex: [2185, 6042]
+            
+            2. self.qual_label_index = defaultdict (see inline comments for more details)
+                keys -> (s, r, o, quals, *quals*). Ex: (11240, 556, 11285, ****)
+                vals -> List of possible qv entities. Ex: [2185, 6042]
+            
+            3. self.qual_index = defaultdict
+                keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                vals -> List of possible [o, quals_wo_pair,  qv_ix]
+
+            4. self.rel_label_index = defaultdict (see inline comments for more details)
+                keys -> (s, r, o, qr_ix, quals). Ex: (11240, 556, 11285, 1, ****)
+                vals -> List of possible rel entities. Ex: [231, 98]
+            
+            5. self.rel_index = defaultdict
+                keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                vals -> List of possible [o, qr_ix]
+
         """
         self.obj_index = defaultdict(list)
         self.qual_index = defaultdict(list)
         self.qual_label_index = defaultdict(list)
+        self.rel_index = defaultdict(list)
+        self.rel_label_index = defaultdict(list)
 
         for statement in self.data:
-            s, r, o, quals = statement[0], statement[1], statement[2], statement[3:] if self.data.shape[1] > 3 else None
+            s, r, o, quals = statement[0], statement[1], statement[2], statement[3:]
+
             self.obj_index[(s, r, *quals)].append(o)
+
+            self.rel_index[(s, r, *quals)].append([o, 1])
+            self.rel_label_index[(s, r, o, 1, *quals)].append(r)        
 
             for i in range(0, len(quals), 2):
                 qr_ix, qv_ix = i, i+1
@@ -78,7 +106,15 @@ class MultiClassSampler:
                     quals_wo_pair = np.array([quals[j] for j in range(len(quals)) if j not in [qr_ix, qv_ix]] + [quals[qr_ix]])
 
                     self.qual_index[(s, r, *quals)].append([o, quals_wo_pair, qv_ix])
-                    self.qual_label_index[(s, r, o, *quals_wo_pair)].append(quals[qv_ix])                    
+                    self.qual_label_index[(s, r, o, *quals_wo_pair)].append(quals[qv_ix])
+
+                    # Account for head, rel, tail...
+                    fixed_qr_ix = qr_ix + 3 
+
+                    # quals_wo_pair = np.array([quals[j] for j in range(len(quals)) if j not in [qr_ix, qv_ix]] + [quals[qv_ix]])
+                    self.rel_index[(s, r, *quals)].append([o, fixed_qr_ix])
+                    self.rel_label_index[(s, r, o, fixed_qr_ix, *quals)].append(quals[qr_ix])  
+
 
         # Remove duplicates in the objects list for convenience
         for k, v in self.obj_index.items():
@@ -140,8 +176,8 @@ class MultiClassSampler:
             lbls = self.qual_label_index[(s, r, o, *quals_wo_pair)]
             y[i, lbls] = 1.0
 
-        if self.lbl_smooth != 0.0:
-            y = (1.0 - self.aux_lbl_smooth)*y + (1.0 / self.n_entities)
+        if self.aux_ent_smooth != 0.0:
+            y = (1.0 - self.aux_ent_smooth)*y + (1.0 / self.n_entities)
 
         return y
 
@@ -153,7 +189,7 @@ class MultiClassSampler:
 
         :param statements: array of shape (bs, seq_len) like (64, 43)
 
-        :return list of [s, r, o, quals, qv_ix, quals_wo_pair]
+        :return: list of [s, r, o, qv_ix, quals, quals_wo_pair]
         """
         qual_stmts = []
 
@@ -167,12 +203,45 @@ class MultiClassSampler:
         return np.array(qual_stmts)
 
 
-    def __len__(self):
-        return len(self.obj_index) // self.bs
 
-    def __iter__(self):
-        self.i = 0
-        return self
+    def get_rel_label(self, statements):
+        """
+        Same as `get_qual_label` but for qual entities
+        """
+        # statement shape for correct processing of the very last batch which size might be less than self.bs
+        y = np.zeros((statements.shape[0], self.n_rel), dtype=np.float32)
+
+        for i, st in enumerate(statements):
+            s, r, o, qr_ix, quals = st[0], st[1], st[2], st[3], st[4:]
+            lbls = self.rel_label_index[(s, r, o, qr_ix, *quals)]
+            y[i, lbls] = 1.0
+
+        if self.aux_rel_smooth != 0.0:
+            y = (1.0 - self.aux_rel_smooth)*y + (1.0 / self.n_rel)
+
+        return y
+
+
+    def get_rel_stmts(self, statements):
+        """
+        For a given list of object stmts get the appropriate rel statements
+
+        :param statements: array of shape (bs, seq_len) like (64, 43)
+
+        :return: list of [s, r, o, qr_ix, *quals]
+        """
+        rel_stmts = []
+
+        for stmt in statements:
+            s, r, quals = stmt[0], stmt[1], stmt[2:]
+
+            for qs in self.rel_index[tuple(stmt)]:
+                o, qr_ix = qs[0], qs[1]
+                rel_stmts.append([s, r, o, qr_ix, *quals])
+
+        rel_stmts = [list(x) for x in set(tuple(x) for x in rel_stmts)]
+
+        return np.array(rel_stmts)
 
 
     def __next__(self):
@@ -196,15 +265,22 @@ class MultiClassSampler:
         _main = np.array([list(x) for x in _stmts_obj])   # stmt -> list
         _obj_labels = self.get_obj_label(_main)           # Return True/False for specific entity -> 1/0...with smoothing
 
-        # Get qual training samples and labels
-        if self.aux_train:
+        if self.aux_ent:
             _stmts_quals = self.get_qual_stmts(_main)
             _stmt_labels = self.get_qual_label(_stmts_quals)
+
+        if self.aux_rel:
+            _stmts_rels = self.get_rel_stmts(_main)
+            _rel_labels = self.get_rel_label(_stmts_rels)
 
         # Increment Iterator
         self.i = min(self.i + self.bs, len(self.obj_keys))
 
-        if self.aux_train:
-            return _main, _obj_labels, _stmts_quals, _stmt_labels
-        else:
+        if not any([self.aux_ent, self.aux_rel]):
             return _main, _obj_labels
+        if self.aux_ent and not self.aux_rel:
+            return _main, _obj_labels, _stmts_quals, _stmt_labels
+        if self.aux_rel and not self.aux_ent:
+            return _main, _obj_labels, _stmts_rels, _rel_labels
+
+        return _main, _obj_labels, _stmts_quals, _stmt_labels, _stmts_rels, _rel_labels

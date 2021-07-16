@@ -161,14 +161,29 @@ class MaskedTransformerDecoder(Transformer):
         if tail_embs is None:
             stk_inp = torch.cat([head_embs, rel_embed, mask_embs, quals], 1).transpose(1, 0)
         else:
+            # print("\n\n\n*******************************************************\n\n\n")
+            # print(head_embs)
+            # print(rel_embed)
+            # print(tail_embs)
+            # print(quals)
+            # print(mask_embs)
+
             stk_inp = torch.cat([head_embs, rel_embed, tail_embs, quals], 1)
+
+            # print(stk_inp[0][1])
+            # print(stk_inp[1][3])
+
             stk_inp[range(stk_inp.shape[0]), mask_pos] = mask_embs.reshape(mask_embs.shape[0], mask_embs.shape[2])  # reshape since of form (a, 1, c)
+
+            # print(stk_inp[0][1])
+            # print(stk_inp[1][3])
+
             stk_inp = stk_inp.transpose(1, 0)
         
         return stk_inp
 
 
-    def forward(self, head_embs, rel_emb, qual_obj_emb, qual_rel_emb, encoder_out, sample_shape, quals_ix=None, tail_embs=None, qual_mask=None):
+    def forward(self, head_embs, rel_emb, qual_obj_emb, qual_rel_emb, encoder_out, sample_shape, quals_ix=None, tail_embs=None, aux_mask=None):
         """
         1. Rearrange entity, rel, and quals
         2. Add positional
@@ -176,10 +191,10 @@ class MaskedTransformerDecoder(Transformer):
         """
         batch_size = head_embs.shape[0]
 
-        if qual_mask is None:
+        if aux_mask is None:
             mask_pos = torch.ones(sample_shape[0], dtype=torch.long, device=self.device) * 2   # 2 since subject
         else:
-            mask_pos = qual_mask
+            mask_pos = aux_mask
 
         # Mask empty quals
         padding_mask = torch.zeros((sample_shape[0], self.seq_length)).bool().to(self.device)
@@ -196,37 +211,26 @@ class MaskedTransformerDecoder(Transformer):
         pos_embeddings = self.pos(positions).transpose(1, 0)
         stk_inp = stk_inp + pos_embeddings
 
-        # Add src_mask
-        # False = allowed to attend!
-        if self.src_mask:
-            mask = torch.zeros((batch_size, self.seq_length, self.seq_length), dtype=torch.bool, device=self.device)
-            for sample in range(mask.shape[0]):
-                mask[sample, :, mask_pos[sample]] = True
-                mask[sample, mask_pos[sample], mask_pos[sample]] = False
+        # Initial mask. Where the position we are masking can't attent
+        mask = torch.zeros((batch_size, self.seq_length, self.seq_length), dtype=torch.bool, device=self.device)
+        for sample in range(mask.shape[0]):
+            mask[sample, :, mask_pos[sample]] = True
+            mask[sample, mask_pos[sample], mask_pos[sample]] = False
 
-            # Cat
-            head_masks = mask
-            for _ in range(self.num_heads - 1):
-                head_masks = torch.cat((head_masks, mask))
+        # Concat mask across all transformer heads
+        head_masks = mask
+        for _ in range(self.num_heads - 1):
+            head_masks = torch.cat((head_masks, mask))
 
-            # Alternate
-            # head_masks = torch.empty((mask.shape[0] * self.num_heads, mask.shape[1], mask.shape[2]), device=self.device)
-            # for head in range(self.num_heads):
-            #     head_masks[head::self.num_heads, :] = mask
-
-            x = self.encoder(stk_inp, mask=head_masks, src_key_padding_mask=padding_mask)
-        else:
-            x = self.encoder(stk_inp, src_key_padding_mask=padding_mask)
+        x = self.encoder(stk_inp, mask=head_masks, src_key_padding_mask=padding_mask)
 
         if self.pooling == "concat":
-            # Take correct mask position for each sample
             x = x.transpose(1, 0)
-            x = x[range(x.shape[0]), mask_pos]
+            x = x[range(x.shape[0]), mask_pos]   # Take correct mask position for each sample
         else:
             x = torch.mean(x, dim=0)
     
         x = self.fc(x)
-
         x = torch.mm(x, encoder_out.transpose(1, 0))
         scores = torch.sigmoid(x)
 

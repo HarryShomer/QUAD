@@ -1,9 +1,9 @@
 """
 Original source can be found here -> https://github.com/migalkin/StarE/blob/master/loops/loops.py
 """
-
-from tqdm.autonotebook import tqdm
+import sys
 from typing import Callable
+from tqdm.autonotebook import tqdm
 
 from utils.utils_mytorch import *
 from .corruption import Corruption
@@ -21,7 +21,8 @@ def training_loop_gcn(
         grad_clipping: bool = True,
         early_stopping: int = 3,
         scheduler: Callable = None,
-        aux_train: bool = False,
+        aux_ent: bool = False,
+        aux_rel: bool = False,
         aux_weight: float = 0.5
     ):
     """
@@ -69,53 +70,59 @@ def training_loop_gcn(
             for batch in tqdm(trn_dl):
                 opt.zero_grad()
 
-                if aux_train:
-                    triples, obj_labels, qual_stmts, qual_labels = batch
-                else:
+                if not any([aux_ent, aux_rel]):
                     triples, obj_labels = batch
-
-                # Standard batch info
-                sub, rel, quals = triples[:, 0], triples[:, 1], triples[:, 2:]
-                _sub = torch.tensor(sub, dtype=torch.long, device=device)
-                _rel = torch.tensor(rel, dtype=torch.long, device=device)
-                _quals = torch.tensor(quals, dtype=torch.long, device=device)
-                _obj_labels = torch.tensor(obj_labels, dtype=torch.float, device=device)
-
-                # Returns (s, r, o, Q-Pairs w/o qv) 
-                if aux_train:
-                    # sub_q, rel_q, obj, quals_wo_pair = qual_stmts[:, 0], qual_stmts[:, 1], qual_stmts[:, 2], qual_stmts[:, 3:]
-                    sub_q, rel_q, obj, qual_ix, quals_q = qual_stmts[:, 0], qual_stmts[:, 1], qual_stmts[:, 2], qual_stmts[:, 3], qual_stmts[:, 4:16]
-
-                    _sub_q = torch.tensor(sub_q.astype(int), dtype=torch.long, device=device)
-                    _rel_q = torch.tensor(rel_q.astype(int), dtype=torch.long, device=device)
-                    _obj = torch.tensor(obj.astype(int), dtype=torch.long, device=device)
-
-                    # _quals_wo_pair = torch.tensor(quals_wo_pair, dtype=torch.long, device=device)
-                    _quals_q = torch.tensor(quals_q.astype(int), dtype=torch.long, device=device)
-
-                    _qual_ix = torch.tensor(qual_ix.astype(int), dtype=torch.long, device=device) + 3  # Account for base trip indices
-
-                    _qual_labels = torch.tensor(qual_labels, dtype=torch.float, device=device)
-                
-
-                # with open("wd50k_100_trip_batch.txt", "w") as f:
-                #     for i in range(len(_sub)):
-                #         f.write(f"{_sub[i] : <8}  |  {_rel[i] : <8}  | {', '.join(str(e) for e in _quals[i].tolist()) : <60}  | {[j[0] for j in _obj_labels[i].nonzero().tolist()]}")
-                #         f.write("\n")
-
-                # with open("wd50k_100_qual_batch.txt", "w") as f:
-                #     for i in range(len(_sub_q)):
-                #         f.write(f"{_sub_q[i] : <8}  |  {_rel_q[i] : <8}  |  {_obj[i] : < 8}  |  {', '.join(str(e) for e in _quals_q[i].tolist()) : <60}  | {_qual_ix[i] : < 5}  |  {[j[0] for j in _qual_labels[i].nonzero().tolist()]}")
-                #         f.write("\n")
-                
-                
-                if aux_train:
-                    obj_preds, qual_preds = model(_sub, _rel, _quals, _sub_q, _rel_q, _obj, _quals_q, _qual_ix)
-                    loss =  model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(qual_preds, _qual_labels)
+                elif aux_ent and not aux_rel:
+                    triples, obj_labels, aux_ent_stmts, aux_ent_labels = batch
+                elif aux_rel and not aux_ent:
+                    sys.exit("TODO: Implement aux_rel and no aux_ent")
                 else:
-                    pred = model(_sub, _rel, _quals)
+                    triples, obj_labels, aux_ent_stmts, aux_ent_labels, aux_rel_stmts, aux_rel_labels = batch
+
+                # Standard batch data
+                _sub, _rel, _quals, _obj_labels = process_triplets(triples, obj_labels, device)
+
+                # Do same if aux ent and rel are specified
+                if aux_ent and len(aux_ent_stmts.shape) > 1:
+                    aux_ent_dict, _aux_ent_labels = process_aux_ent(aux_ent_stmts, aux_ent_labels, device)
+                if aux_rel and len(aux_rel_stmts.shape) > 1:
+                    aux_rel_dict, _aux_rel_labels = process_aux_rel(aux_rel_stmts, aux_rel_labels, device)
+
+
+                # for i in range(len(aux_rel_dict['base_sub_ix'])):
+                #     if aux_rel_dict['base_sub_ix'][i].item() == 15395:
+                #         print(aux_rel_dict['base_sub_ix'][i].item(), end=" ")
+                #         print(aux_rel_dict['base_rel_ix'][i].item(), end=" ")
+                #         print(aux_rel_dict['base_obj_ix'][i].item(), end=" ")
+                #         print([j.item() for j in aux_rel_dict['quals'][i]], end=" ")
+                #         print(aux_rel_dict['mask'][i].item())
+                #         print(aux_rel_labels[i].argmax())
+                # exit()
+
+                    
+                # If no quals and aux_ent = True then dim of `aux_ent_stmts = 1`
+                if aux_ent and not aux_rel and len(aux_ent_stmts.shape) > 1:
+                    obj_preds, aux_preds, _ = model(_sub, _rel, _quals, aux_ent=aux_ent_dict)
+                    loss = model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(aux_preds, _aux_ent_labels)
+                
+                elif aux_rel and not aux_ent and len(aux_rel_stmts.shape) > 1:
+                    obj_preds, _, aux_preds = model(_sub, _rel, _quals, aux_rel=aux_rel_dict)
+                    loss = model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(aux_preds, _aux_rel_labels)
+                
+                elif aux_rel and aux_ent and len(aux_ent_stmts.shape) > 1 and len(aux_rel_stmts.shape) > 1:
+                    obj_preds, aux_ent_preds, aux_rel_preds = model(_sub, _rel, _quals, aux_ent=aux_ent_dict, aux_rel=aux_rel_dict)
+                    # .Take mean of aux loss so loss isn't too high
+                    a = model.loss(aux_ent_preds, _aux_ent_labels)
+                    b = model.loss(aux_rel_preds, _aux_rel_labels)
+
+                    # print(f"Entity Loss: {a}  | Relation Loss: {b}")
+
+                    loss = model.loss(obj_preds, _obj_labels) + .5 * aux_weight * (a + b)
+                
+                else:
+                    pred, _, _ = model(_sub, _rel, _quals)
                     loss = model.loss(pred, _obj_labels)
-                                
+                
                 per_epoch_loss.append(loss.item())    
                 loss.backward()
 
@@ -180,3 +187,60 @@ def training_loop_gcn(
            train_hits_3_bnchmk, train_hits_5_bnchmk, train_hits_10_bnchmk, \
            valid_acc, valid_mrr, \
            valid_hits_3, valid_hits_5, valid_hits_10
+
+
+def process_triplets(triples, obj_labels, device):
+    """
+    Extract and convert to torch objects
+    """
+    sub, rel, quals = triples[:, 0], triples[:, 1], triples[:, 2:]
+
+    _sub        = torch.tensor(sub, dtype=torch.long, device=device)
+    _rel        = torch.tensor(rel, dtype=torch.long, device=device)
+    _quals      = torch.tensor(quals, dtype=torch.long, device=device)
+    _obj_labels = torch.tensor(obj_labels, dtype=torch.float, device=device)
+
+    return _sub, _rel, _quals, _obj_labels
+
+
+
+def process_aux_ent(aux_ent_stmts, aux_ent_labels, device):
+    """
+    Extract information from aux ent batch, convert to tensors, and place in dict
+    """
+    sub_q, rel_q, obj, qual_ix, quals_q = aux_ent_stmts[:, 0], aux_ent_stmts[:, 1], aux_ent_stmts[:, 2], aux_ent_stmts[:, 3], aux_ent_stmts[:, 4:16]
+
+    aux_ent_dict = {
+        "base_sub_ix": torch.tensor(sub_q.astype(int), dtype=torch.long, device=device),
+        "base_rel_ix": torch.tensor(rel_q.astype(int), dtype=torch.long, device=device),
+        "base_obj_ix": torch.tensor(obj.astype(int), dtype=torch.long, device=device),
+        "quals": torch.tensor(quals_q.astype(int), dtype=torch.long, device=device),
+
+        # Position in sequence of qual entity. +3 is to account for base trip indices
+        "mask": torch.tensor(qual_ix.astype(int), dtype=torch.long, device=device) + 3
+    }
+
+    _aux_ent_labels = torch.tensor(aux_ent_labels, dtype=torch.float, device=device)
+
+    return aux_ent_dict, _aux_ent_labels
+
+
+def process_aux_rel(aux_rel_stmts, aux_rel_labels, device):
+    """
+    Extract information from aux rel batch, convert to tensors, and place in dict
+    """
+    sub_q, rel_q, obj, rel_ix, quals_q = aux_rel_stmts[:, 0], aux_rel_stmts[:, 1], aux_rel_stmts[:, 2], aux_rel_stmts[:, 3], aux_rel_stmts[:, 4:]
+
+    aux_rel_dict = {
+        "base_sub_ix": torch.tensor(sub_q.astype(int), dtype=torch.long, device=device),
+        "base_rel_ix": torch.tensor(rel_q.astype(int), dtype=torch.long, device=device),
+        "base_obj_ix": torch.tensor(obj.astype(int), dtype=torch.long, device=device),
+        "quals": torch.tensor(quals_q.astype(int), dtype=torch.long, device=device),
+
+        # No need for +3. Handled in sampler
+        "mask": torch.tensor(rel_ix.astype(int), dtype=torch.long, device=device)
+    }
+
+    _aux_rel_labels = torch.tensor(aux_rel_labels, dtype=torch.float, device=device)
+
+    return aux_rel_dict, _aux_rel_labels
