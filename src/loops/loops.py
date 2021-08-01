@@ -23,7 +23,9 @@ def training_loop_gcn(
         scheduler: Callable = None,
         aux_ent: bool = False,
         aux_rel: bool = False,
-        aux_weight: float = 0.5
+        aux_weight: float = 0.5,
+        warmup: Callable = None,
+        max_qpairs = 12
     ):
     """
     A fn which can be used to train a language model.
@@ -84,21 +86,9 @@ def training_loop_gcn(
 
                 # Do same if aux ent and rel are specified
                 if aux_ent and len(aux_ent_stmts.shape) > 1:
-                    aux_ent_dict, _aux_ent_labels = process_aux_ent(aux_ent_stmts, aux_ent_labels, device)
+                    aux_ent_dict, _aux_ent_labels = process_aux_ent(aux_ent_stmts, aux_ent_labels, max_qpairs, device)
                 if aux_rel and len(aux_rel_stmts.shape) > 1:
                     aux_rel_dict, _aux_rel_labels = process_aux_rel(aux_rel_stmts, aux_rel_labels, device)
-
-
-                # for i in range(len(aux_rel_dict['base_sub_ix'])):
-                #     if aux_rel_dict['base_sub_ix'][i].item() == 15395:
-                #         print(aux_rel_dict['base_sub_ix'][i].item(), end=" ")
-                #         print(aux_rel_dict['base_rel_ix'][i].item(), end=" ")
-                #         print(aux_rel_dict['base_obj_ix'][i].item(), end=" ")
-                #         print([j.item() for j in aux_rel_dict['quals'][i]], end=" ")
-                #         print(aux_rel_dict['mask'][i].item())
-                #         print(aux_rel_labels[i].argmax())
-                # exit()
-
                     
                 # If no quals and aux_ent = True then dim of `aux_ent_stmts = 1`
                 if aux_ent and not aux_rel and len(aux_ent_stmts.shape) > 1:
@@ -181,6 +171,8 @@ def training_loop_gcn(
     
         if scheduler is not None:
             scheduler.step()
+        if warmup is not None:
+            warmup.dampen()
 
     return train_acc, train_loss, \
            train_acc_bnchmk, train_mrr_bnchmk, \
@@ -204,11 +196,12 @@ def process_triplets(triples, obj_labels, device):
 
 
 
-def process_aux_ent(aux_ent_stmts, aux_ent_labels, device):
+def process_aux_ent(aux_ent_stmts, aux_ent_labels, max_qpairs, device):
     """
     Extract information from aux ent batch, convert to tensors, and place in dict
     """
-    sub_q, rel_q, obj, qual_ix, quals_q = aux_ent_stmts[:, 0], aux_ent_stmts[:, 1], aux_ent_stmts[:, 2], aux_ent_stmts[:, 3], aux_ent_stmts[:, 4:16]
+
+    sub_q, rel_q, obj, qual_ix, quals_q = aux_ent_stmts[:, 0], aux_ent_stmts[:, 1], aux_ent_stmts[:, 2], aux_ent_stmts[:, 3], aux_ent_stmts[:, 4:4+max_qpairs]
 
     aux_ent_dict = {
         "base_sub_ix": torch.tensor(sub_q.astype(int), dtype=torch.long, device=device),

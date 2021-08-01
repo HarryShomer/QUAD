@@ -21,6 +21,28 @@ PARSED_DATA_DIR = Path('./data/parsed_data')
 
 
 
+def get_max_seq_len(dataset):
+    """
+    Get the maximum sequence len for the dataset. Varies
+
+    Parameters:
+    -----------
+        dataset: str
+            Name of dataset
+
+    Returns:
+    -------
+    int 
+        Max sequence len (either 11 or 15)
+    """
+    if dataset == "jf17k":
+        return 11
+    if dataset == "wikipeople":
+        return 13
+    return 15
+    
+
+
 def save_model(model_obj, dataset):
     """
     """

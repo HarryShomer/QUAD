@@ -22,7 +22,8 @@ class MultiClassSampler:
             aux_ent=False, 
             aux_rel=False, 
             aux_ent_smooth = 0.1,
-            aux_rel_smooth = 0.1
+            aux_rel_smooth = 0.1,
+            max_pairs = 15
         ):
 
         self.bs = bs
@@ -34,6 +35,7 @@ class MultiClassSampler:
         self.aux_rel_smooth = aux_rel_smooth
         self.aux_ent = aux_ent
         self.aux_rel = aux_rel
+        self.max_qpairs = max_pairs
 
         self.build_index()
 
@@ -172,7 +174,7 @@ class MultiClassSampler:
         y = np.zeros((statements.shape[0], self.n_entities), dtype=np.float32)
 
         for i, s in enumerate(statements):
-            s, r, o, quals_wo_pair = s[0], s[1], s[2], s[3 + 1 + 12:]  # 3 = s, r, o | 1 = qv_ix | 12 = 6 qual pairs
+            s, r, o, quals_wo_pair = s[0], s[1], s[2], s[3 + 1 + self.max_qpairs:]  # 3 = s, r, o | 1 = qv_ix | max_qpairs = num_quals
             lbls = self.qual_label_index[(s, r, o, *quals_wo_pair)]
             y[i, lbls] = 1.0
 

@@ -1,4 +1,4 @@
-from .new_encoders import *
+from .encoders import *
 from .transformers import *
 from utils.utils_gcn import *
 
@@ -17,23 +17,21 @@ class HypRelModel(nn.Module):
         self.num_rel   = config['NUM_RELATIONS']
         self.emb_dim   = config['EMBEDDING_DIM']
 
-        #self.ent_skip_matrix = get_param((self.emb_dim * 2, self.emb_dim))
-
         self.ent_embs = get_param((self.num_ent, self.emb_dim))
         self.rel_embs = self.get_rel_emb()
 
-        # self.trip_encoder = HypRelEncoder(data, config, config['MODEL']['TRIP_LAYERS'])
-        # self.trip_encoder.to(self.device)
+        self.trip_encoder = HypRelEncoder(data, config, config['MODEL']['TRIP_LAYERS'])
+        self.trip_encoder.to(self.device)
 
-        # self.qual_encoder = HypRelEncoder(data, config, config['MODEL']['QUAL_LAYERS'], qual=True)
-        # self.qual_encoder.to(self.device)
-
-        self.hyp_encoder = HypRelEncoder(data, config, config['MODEL']['TRIP_LAYERS'], qual=True)
-        self.hyp_encoder.to(self.device)
-
+        self.qual_encoder = HypRelEncoder(data, config, config['MODEL']['QUAL_LAYERS'], qual=True)
+        self.qual_encoder.to(self.device)
 
         self.decoder = MaskedTransformerDecoder(config) if self.mask else TransformerDecoder(config)
         self.decoder.to(self.device)
+
+        self.ent_parallel_matrix = get_param((self.emb_dim * 2, self.emb_dim))
+        self.ent_parallel_drop = nn.Dropout(self.config['MODEL']['PARALLEL_DROP'])
+        self.ent_parallel_lnorm = nn.LayerNorm(self.emb_dim)
 
         self.loss_fn = torch.nn.BCELoss()
 
@@ -91,7 +89,17 @@ class HypRelModel(nn.Module):
         init_rel = self.rel_embs
         aux_ent_preds, aux_rel_preds = None, None
 
-        x, r = self.hyp_encoder(init_ent, init_rel)
+        x1, r1 = self.trip_encoder("trip", init_ent, init_rel)
+
+        if not self.config['ONLY-TRIPS']:
+            x, r = self.qual_encoder("qual", init_ent, init_rel)
+
+            x = torch.matmul(torch.cat((x1, x), dim=1), self.ent_parallel_matrix)
+            x = self.ent_parallel_drop(x)
+            x = self.ent_parallel_lnorm(x)
+        else:
+            x, r = x1, r1
+
 
         # Subject Prediction
         s_emb, r_emb, qe_emb, qr_emb = self.index_embs(x, r, sub_ix, rel_ix, quals_ix)
@@ -107,7 +115,8 @@ class HypRelModel(nn.Module):
             s_emb, r_emb, qe_emb, qr_emb, o_emb = self.index_embs_aux(x, r, aux_rel['base_sub_ix'], aux_rel['base_rel_ix'], aux_rel['base_obj_ix'], aux_rel['quals'])
             aux_rel_preds = self.decoder(s_emb, r_emb, qe_emb, qr_emb, r, aux_rel['base_sub_ix'].shape, quals_ix=aux_rel['quals'], tail_embs=o_emb, aux_mask=aux_rel['mask'])
         
-
+        
         return obj_preds, aux_ent_preds, aux_rel_preds
         
+
 

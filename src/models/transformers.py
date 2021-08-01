@@ -1,7 +1,8 @@
-import math
-from utils.utils_gcn import *
+from numpy.lib.arraypad import pad
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from models.torch_transformer import TransformerEncoderBias, TransformerEncoderLayerBias
 
+from utils.utils_gcn import *
 
 
 class Transformer(nn.Module):
@@ -31,8 +32,12 @@ class Transformer(nn.Module):
         self.emb_dim = params['EMBEDDING_DIM']
         self.pooling = params['MODEL']['POOLING']  # avg / concat
 
-        encoder_layers = TransformerEncoderLayer(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
-        self.encoder = TransformerEncoder(encoder_layers, params['MODEL']['T_LAYERS'])
+        if params['EDGE_BIAS']:
+            encoder_layers = TransformerEncoderLayerBias(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
+            self.encoder = TransformerEncoderBias(encoder_layers, params['MODEL']['T_LAYERS'], self.num_heads, self.emb_dim, device=self.device, seq_len=params['MAX_QPAIRS'])
+        else:
+            encoder_layers = TransformerEncoderLayer(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
+            self.encoder = TransformerEncoder(encoder_layers, params['MODEL']['T_LAYERS'])
 
         self.pos = nn.Embedding(num_positions, self.emb_dim)
 
@@ -135,14 +140,24 @@ class MaskedTransformerDecoder(Transformer):
 
     Takes entity, relation, and qual pairs
     """
-    def __init__(self, params):
+    def __init__(self, params, hid_drop_rate=.1):
         super().__init__(params, params['MAX_QPAIRS'])
         self.seq_length = params['MAX_QPAIRS']
 
         self.mask_emb = torch.nn.Parameter(torch.randn(1, self.emb_dim, dtype=torch.float32), True)
         
         self.flat_sz = self.emb_dim * (self.seq_length - 1)
-        self.fc = torch.nn.Linear(self.emb_dim, self.emb_dim)
+        self.classifier = torch.nn.Linear(self.emb_dim, self.emb_dim)
+
+        #################################################
+        if self.p['MODEL']['TRANS_POST']:
+            self.fcn = self.FCN(self.emb_dim, self.emb_dim, self.emb_dim)
+
+            self.hid_drop1 = nn.Dropout(hid_drop_rate)
+            self.hid_drop2 = nn.Dropout(hid_drop_rate)
+            self.layer_norm1 = nn.LayerNorm(self.emb_dim)
+            self.layer_norm2 = nn.LayerNorm(self.emb_dim)
+        #######################i#########################
 
 
 
@@ -204,12 +219,12 @@ class MaskedTransformerDecoder(Transformer):
         input_mask = self.mask_emb.repeat(sample_shape[0], 1)
      
         # Returns Shape of (Sequence Len, Batch Size, Embedding Dim)
-        stk_inp = self.concat(head_embs, rel_emb, qual_rel_emb, qual_obj_emb, input_mask, mask_pos, tail_embs)
+        trans_inp = self.concat(head_embs, rel_emb, qual_rel_emb, qual_obj_emb, input_mask, mask_pos, tail_embs)
 
         # Add positional
-        positions = torch.arange(stk_inp.shape[0], dtype=torch.long, device=self.device).repeat(stk_inp.shape[1], 1)
+        positions = torch.arange(trans_inp.shape[0], dtype=torch.long, device=self.device).repeat(trans_inp.shape[1], 1)
         pos_embeddings = self.pos(positions).transpose(1, 0)
-        stk_inp = stk_inp + pos_embeddings
+        trans_inp = trans_inp + pos_embeddings
 
         # Initial mask. Where the position we are masking can't attent
         mask = torch.zeros((batch_size, self.seq_length, self.seq_length), dtype=torch.bool, device=self.device)
@@ -222,19 +237,68 @@ class MaskedTransformerDecoder(Transformer):
         for _ in range(self.num_heads - 1):
             head_masks = torch.cat((head_masks, mask))
 
-        x = self.encoder(stk_inp, mask=head_masks, src_key_padding_mask=padding_mask)
+        x = self.encoder(trans_inp, mask=head_masks, src_key_padding_mask=padding_mask)
 
-        if self.pooling == "concat":
-            x = x.transpose(1, 0)
-            x = x[range(x.shape[0]), mask_pos]   # Take correct mask position for each sample
-        else:
-            x = torch.mean(x, dim=0)
-    
-        x = self.fc(x)
+        # From (SeqLength, BS, Dim) to (BS, SeqLength, Dim)
+        x = x.transpose(1, 0)
+
+        #################################################################################
+        if self.p['MODEL']['TRANS_POST']:
+            # 1. Post Processing "Layer" - Drop, Skip, LayerNorm
+            x = self.hid_drop1(x)
+            x = x + trans_inp.transpose(0, 1)
+            # out_l1 = self.layer_norm1(x)
+            x = self.layer_norm1(x)
+
+            # 2a. Pre-Process - Drop, LayerNorm
+            # x = self.hid_drop1(out_l1)
+            # x = self.layer_norm1(x)
+
+            # # # 2. FCN
+            # x = self.fcn(x)
+
+            # # 3. Post Processing "Layer" - Drop, Skip, LayerNorm
+            # x = self.hid_drop2(x)
+            # x = x + out_l1
+            # x = self.layer_norm2(x)
+
+            # # 3a. Pre-Process - Drop, LayerNorm
+            # x = self.hid_drop2(x)
+            # x = self.layer_norm2(x)
+        #################################################################################
+
+        # Take correct mask position for each sample
+        x = x[range(x.shape[0]), mask_pos] 
+
+        x = self.classifier(x)
         x = torch.mm(x, encoder_out.transpose(1, 0))
         scores = torch.sigmoid(x)
 
         return scores
+
+
+
+
+    #######################################################################################
+    #######################################################################################
+    #######################################################################################
+
+    def FCN(self, d1, d2, d3):
+        """
+        Implement 2 layer Fully connected network
+        """
+        return nn.Sequential(
+                    nn.Linear(d1, d2),
+                    nn.GELU(),
+                    nn.Linear(d2, d3),
+                ).to(self.device)
+
+
+
+    #######################################################################################
+    #######################################################################################
+    #######################################################################################
+
 
 
 

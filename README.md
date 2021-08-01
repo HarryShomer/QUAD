@@ -1,3 +1,2 @@
 # HyperRelKG
 
-attr

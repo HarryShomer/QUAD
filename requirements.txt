@@ -2,3 +2,4 @@ torch
 numpy
 torch_geometric
 tqdm
+pytorch_warmup

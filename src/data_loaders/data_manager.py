@@ -5,7 +5,7 @@ from functools import partial
 from typing import List, Union, Dict, Callable
 import numpy as np
 from utils.utils_mytorch import FancyDict
-from utils.utils import KNOWN_DATASETS
+from utils.utils import *
 
 from .load import load_jf17k_statements, load_jf17k_quints, load_jf17k_triples, \
     load_wikipeople_statements, load_wikipeople_quints, load_wikipeople_triples, \

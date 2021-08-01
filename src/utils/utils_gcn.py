@@ -134,3 +134,4 @@ def scatter_(name, src, index, dim_size=None):
         out[out == fill_value] = 0
 
     return out
+

@@ -1,6 +1,7 @@
 import random
 import argparse
 from functools import partial
+import pytorch_warmup as warmup
 
 from data_loaders.data_manager import DataManager
 from utils.utils import *
@@ -79,20 +80,26 @@ parser.add_argument("--aux-weight", help="Weight for aux loss", type=float, defa
 parser.add_argument("--aux-ent-smooth", default=.1, type=float)
 parser.add_argument("--aux-rel-smooth", default=.1, type=float)
 
+parser.add_argument("--warmup", action='store_true', default=False)
+parser.add_argument("--edge-bias", action='store_true', default=False)
+parser.add_argument("--trans-post", action='store_true', default=False)
 
-parser.add_argument("--same-filter", action='store_true', default=False)
-parser.add_argument("--skip", action='store_true', default=False)
+parser.add_argument("--parallel", action='store_true', default=False)
+parser.add_argument("--parallel-drop", default=.3, type=float)
+
 
 cmd_args = parser.parse_args()
 
 
-if cmd_args.same_filter:
-    from models.new_hyper_gcn import HypRelModel
+if cmd_args.parallel:
+    from models.hyper_gcn_parallel import HypRelModel
 else:
     from models.hyper_gcn import HypRelModel
 
 
+
 DEFAULT_CONFIG['MODEL'] = MODEL_CONFIG
+# DEFAULT_CONFIG['MAX_QPAIRS'] = get_max_seq_len(cmd_args.dataset.lower())
 DEFAULT_CONFIG['AUX_ENT'] = cmd_args.aux_ent
 DEFAULT_CONFIG['AUX_REL'] = cmd_args.aux_rel
 DEFAULT_CONFIG['LAMBDA'] = cmd_args.lr_lambda
@@ -127,7 +134,9 @@ DEFAULT_CONFIG['MODEL']['SRC_MASK'] = cmd_args.mask
 DEFAULT_CONFIG['MODEL']['QUAL_COMB'] = cmd_args.qual_comb.lower()
 DEFAULT_CONFIG['MODEL']['T_LAYERS'] = cmd_args.trans_layers
 DEFAULT_CONFIG['MODEL']['T_N_HEADS'] = cmd_args.trans_heads
-DEFAULT_CONFIG['MODEL']['SKIP'] = cmd_args.skip
+DEFAULT_CONFIG['EDGE_BIAS'] = cmd_args.edge_bias
+DEFAULT_CONFIG['MODEL']['TRANS_POST'] = cmd_args.trans_post
+DEFAULT_CONFIG['MODEL']['PARALLEL_DROP'] = cmd_args.parallel_drop
 
 
 def get_data(config):
@@ -213,17 +222,38 @@ def main():
         ev_val_data = {'index': combine(train_data, test_data), 'eval': combine(valid_data)}
         tr_data     = {'train': combine(train_data), 'valid': ev_val_data['eval']}
 
+
     eval_metrics = [acc, mrr, mr, partial(hits_at, k=3), partial(hits_at, k=5), partial(hits_at, k=10)]
 
-    sampler = MultiClassSampler(data= tr_data['train'], n_entities=config['NUM_ENTITIES'], n_rel=config['NUM_RELATIONS'], 
-                                lbl_smooth=config['LABEL_SMOOTHING'], bs=config['BATCH_SIZE'], aux_ent=config['AUX_ENT'], 
-                                aux_rel=config['AUX_REL'], aux_ent_smooth=config['AUX_ENT_SMOOTH'], aux_rel_smooth=config['AUX_REL_SMOOTH']
-                                )
+    sampler = MultiClassSampler(
+                    data= tr_data['train'], 
+                    n_entities=config['NUM_ENTITIES'], 
+                    n_rel=config['NUM_RELATIONS'], 
+                    lbl_smooth=config['LABEL_SMOOTHING'], 
+                    bs=config['BATCH_SIZE'], 
+                    aux_ent=config['AUX_ENT'], 
+                    aux_rel=config['AUX_REL'], 
+                    aux_ent_smooth=config['AUX_ENT_SMOOTH'], 
+                    aux_rel_smooth=config['AUX_REL_SMOOTH'],
+                    max_pairs = config['MAX_QPAIRS'] - 3 
+            )
 
-    evaluation_valid = EvaluationBenchGNNMultiClass(ev_val_data, model, bs=config['BATCH_SIZE'], metrics=eval_metrics,
-                                                    filtered=True, n_ents=config['NUM_ENTITIES'],
-                                                    excluding_entities=ent_excluded_from_corr,
-                                                    positions=config.get('CORRUPTION_POSITIONS', None), config=config)
+    evaluation_valid = EvaluationBenchGNNMultiClass(
+                            ev_val_data, model, 
+                            bs=config['BATCH_SIZE'], 
+                            metrics=eval_metrics,
+                            filtered=True, 
+                            n_ents=config['NUM_ENTITIES'],
+                            excluding_entities=ent_excluded_from_corr,
+                            positions=config.get('CORRUPTION_POSITIONS', None), 
+                            config=config
+                        )
+
+    # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None
+    lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda e: config['LAMBDA']**e) if config['LR_SCHEDULER'] else None
+
+    # First 10% are warmup
+    warmup_sched = warmup.LinearWarmup(optimizer, warmup_period=int(config['EPOCHS']*.1)) if cmd_args.warmup else None
 
     # The args to use if we're training w default stuff
     args = {
@@ -238,10 +268,12 @@ def main():
         "grad_clipping": config['GRAD_CLIPPING'],
         "early_stopping": config['EARLY_STOPPING'],
         #"scheduler": torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None,
-        "scheduler": torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda e: config['LAMBDA']**e) if config['LR_SCHEDULER'] else None,
+        "scheduler": lr_scheduler,
+        "warmup": warmup_sched,
         "aux_ent": config['AUX_ENT'],
         "aux_rel": config['AUX_REL'],
-        "aux_weight": config['AUX_WEIGHT']
+        "aux_weight": config['AUX_WEIGHT'],
+        "max_qpairs": config['MAX_QPAIRS'] - 3
     }
 
     print(f"Dataset has {config['NUM_ENTITIES']} entities and {config['NUM_RELATIONS']} relations!\n", flush=True)
