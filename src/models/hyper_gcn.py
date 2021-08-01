@@ -92,7 +92,6 @@ class HypRelModel(nn.Module):
         else:
             x, r = x1, r1
 
-        # x, r = init_ent, init_rel
 
         # Subject Prediction
         s_emb, r_emb, qe_emb, qr_emb = self.index_embs(x, r, sub_ix, rel_ix, quals_ix)
@@ -108,7 +107,6 @@ class HypRelModel(nn.Module):
             s_emb, r_emb, qe_emb, qr_emb, o_emb = self.index_embs_aux(x, r, aux_rel['base_sub_ix'], aux_rel['base_rel_ix'], aux_rel['base_obj_ix'], aux_rel['quals'])
             aux_rel_preds = self.decoder(s_emb, r_emb, qe_emb, qr_emb, r, aux_rel['base_sub_ix'].shape, quals_ix=aux_rel['quals'], tail_embs=o_emb, aux_mask=aux_rel['mask'])
         
-
 
         return obj_preds, aux_ent_preds, aux_rel_preds
         
