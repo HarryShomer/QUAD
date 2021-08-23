@@ -101,14 +101,11 @@ def training_loop_gcn(
                 
                 elif aux_rel and aux_ent and len(aux_ent_stmts.shape) > 1 and len(aux_rel_stmts.shape) > 1:
                     obj_preds, aux_ent_preds, aux_rel_preds = model(_sub, _rel, _quals, aux_ent=aux_ent_dict, aux_rel=aux_rel_dict)
+
                     # .Take mean of aux loss so loss isn't too high
                     a = model.loss(aux_ent_preds, _aux_ent_labels)
                     b = model.loss(aux_rel_preds, _aux_rel_labels)
-
-                    # print(f"Entity Loss: {a}  | Relation Loss: {b}")
-
                     loss = model.loss(obj_preds, _obj_labels) + .5 * aux_weight * (a + b)
-                
                 else:
                     pred, _, _ = model(_sub, _rel, _quals)
                     loss = model.loss(pred, _obj_labels)

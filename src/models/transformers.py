@@ -140,7 +140,7 @@ class MaskedTransformerDecoder(Transformer):
 
     Takes entity, relation, and qual pairs
     """
-    def __init__(self, params, hid_drop_rate=.1):
+    def __init__(self, params):
         super().__init__(params, params['MAX_QPAIRS'])
         self.seq_length = params['MAX_QPAIRS']
 
@@ -148,16 +148,6 @@ class MaskedTransformerDecoder(Transformer):
         
         self.flat_sz = self.emb_dim * (self.seq_length - 1)
         self.classifier = torch.nn.Linear(self.emb_dim, self.emb_dim)
-
-        #################################################
-        if self.p['MODEL']['TRANS_POST']:
-            self.fcn = self.FCN(self.emb_dim, self.emb_dim, self.emb_dim)
-
-            self.hid_drop1 = nn.Dropout(hid_drop_rate)
-            self.hid_drop2 = nn.Dropout(hid_drop_rate)
-            self.layer_norm1 = nn.LayerNorm(self.emb_dim)
-            self.layer_norm2 = nn.LayerNorm(self.emb_dim)
-        #######################i#########################
 
 
 
@@ -176,23 +166,8 @@ class MaskedTransformerDecoder(Transformer):
         if tail_embs is None:
             stk_inp = torch.cat([head_embs, rel_embed, mask_embs, quals], 1).transpose(1, 0)
         else:
-            # print("\n\n\n*******************************************************\n\n\n")
-            # print(head_embs)
-            # print(rel_embed)
-            # print(tail_embs)
-            # print(quals)
-            # print(mask_embs)
-
             stk_inp = torch.cat([head_embs, rel_embed, tail_embs, quals], 1)
-
-            # print(stk_inp[0][1])
-            # print(stk_inp[1][3])
-
             stk_inp[range(stk_inp.shape[0]), mask_pos] = mask_embs.reshape(mask_embs.shape[0], mask_embs.shape[2])  # reshape since of form (a, 1, c)
-
-            # print(stk_inp[0][1])
-            # print(stk_inp[1][3])
-
             stk_inp = stk_inp.transpose(1, 0)
         
         return stk_inp
@@ -226,7 +201,7 @@ class MaskedTransformerDecoder(Transformer):
         pos_embeddings = self.pos(positions).transpose(1, 0)
         trans_inp = trans_inp + pos_embeddings
 
-        # Initial mask. Where the position we are masking can't attent
+        # Initial mask. Where the position we are masking can't attend
         mask = torch.zeros((batch_size, self.seq_length, self.seq_length), dtype=torch.bool, device=self.device)
         for sample in range(mask.shape[0]):
             mask[sample, :, mask_pos[sample]] = True
@@ -242,31 +217,6 @@ class MaskedTransformerDecoder(Transformer):
         # From (SeqLength, BS, Dim) to (BS, SeqLength, Dim)
         x = x.transpose(1, 0)
 
-        #################################################################################
-        if self.p['MODEL']['TRANS_POST']:
-            # 1. Post Processing "Layer" - Drop, Skip, LayerNorm
-            x = self.hid_drop1(x)
-            x = x + trans_inp.transpose(0, 1)
-            # out_l1 = self.layer_norm1(x)
-            x = self.layer_norm1(x)
-
-            # 2a. Pre-Process - Drop, LayerNorm
-            # x = self.hid_drop1(out_l1)
-            # x = self.layer_norm1(x)
-
-            # # # 2. FCN
-            # x = self.fcn(x)
-
-            # # 3. Post Processing "Layer" - Drop, Skip, LayerNorm
-            # x = self.hid_drop2(x)
-            # x = x + out_l1
-            # x = self.layer_norm2(x)
-
-            # # 3a. Pre-Process - Drop, LayerNorm
-            # x = self.hid_drop2(x)
-            # x = self.layer_norm2(x)
-        #################################################################################
-
         # Take correct mask position for each sample
         x = x[range(x.shape[0]), mask_pos] 
 
@@ -275,30 +225,6 @@ class MaskedTransformerDecoder(Transformer):
         scores = torch.sigmoid(x)
 
         return scores
-
-
-
-
-    #######################################################################################
-    #######################################################################################
-    #######################################################################################
-
-    def FCN(self, d1, d2, d3):
-        """
-        Implement 2 layer Fully connected network
-        """
-        return nn.Sequential(
-                    nn.Linear(d1, d2),
-                    nn.GELU(),
-                    nn.Linear(d2, d3),
-                ).to(self.device)
-
-
-
-    #######################################################################################
-    #######################################################################################
-    #######################################################################################
-
 
 
 
@@ -335,5 +261,3 @@ class TransformerTriplets(Transformer):
         x = self.fc(x)
 
         return x
-
-
