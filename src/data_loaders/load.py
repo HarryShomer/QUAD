@@ -134,8 +134,7 @@ def _conv_jf17k_to_quints(data):
     return result
 
 
-def _get_uniques_(train_data: List[tuple], valid_data: List[tuple], test_data: List[tuple]) -> (
-list, list):
+def _get_uniques_(train_data: List[tuple], valid_data: List[tuple], test_data: List[tuple]) -> (list, list):
     """ Throw in parsed_data/wd50k/ files and we'll count the entities and predicates"""
 
     statement_entities, statement_predicates = [], []
@@ -1271,12 +1270,14 @@ def load_jf17k_quints() -> Dict:
                 "n_relations": len(q_predicates), 'e2id': entoid, 'r2id': prtoid}
 
 
-def load_jf17k_statements(maxlen=15) -> Dict:
+def load_jf17k_statements(maxlen=15, perc="") -> Dict:
     training_statements = []
     test_statements = []
 
-    with open(PARSED_DATA_DIR / 'jf17k/train.txt', 'r') as train_file, \
-        open(PARSED_DATA_DIR / 'jf17k/test.txt', 'r') as test_file:
+    train_file = f'jf17k_{perc}/train.txt' if perc != "" else 'jf17k/train.txt'
+    test_file = f'jf17k_{perc}/test.txt' if perc != "" else 'jf17k/test.txt'
+
+    with open(PARSED_DATA_DIR / train_file, 'r') as train_file, open(PARSED_DATA_DIR / test_file, 'r') as test_file:
 
         for line in train_file:
             training_statements.append(line.strip("\n").split(","))

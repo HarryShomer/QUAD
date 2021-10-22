@@ -124,6 +124,14 @@ class DataManager(object):
                 else:
                     return partial(load_jf17k_statements, maxlen=config['MAX_QPAIRS'])
 
+        elif config['DATASET'] == "jf17k_100":
+            return partial(load_jf17k_statements, maxlen=config['MAX_QPAIRS'], perc="100")
+        elif config['DATASET'] == "jf17k_66":
+            return partial(load_jf17k_statements, maxlen=config['MAX_QPAIRS'], perc="66")
+        elif config['DATASET'] == "jf17k_33":
+            return partial(load_jf17k_statements, maxlen=config['MAX_QPAIRS'], perc="33")
+
+
     @staticmethod
     def gather_missing_entities(data: List[list], n_ents: int, positions: List[int]) -> np.array:
         """
@@ -213,8 +221,6 @@ class DataManager(object):
             -> Dict[str, np.ndarray]:
         """
         NOTE: Inverses are added here!
-
-        Decisions:
 
         Quals are represented differently here, i.e., more as a coo matrix
         s1 p1 o1 qr1 qe1 qr2 qe2    [edge index column 0]

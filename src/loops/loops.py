@@ -22,7 +22,6 @@ def training_loop_gcn(
         early_stopping: int = 3,
         scheduler: Callable = None,
         aux_ent: bool = False,
-        aux_rel: bool = False,
         aux_weight: float = 0.5,
         warmup: Callable = None,
         max_qpairs = 12
@@ -72,42 +71,25 @@ def training_loop_gcn(
             for batch in tqdm(trn_dl):
                 opt.zero_grad()
 
-                if not any([aux_ent, aux_rel]):
-                    triples, obj_labels = batch
-                elif aux_ent and not aux_rel:
+                if aux_ent:
                     triples, obj_labels, aux_ent_stmts, aux_ent_labels = batch
-                elif aux_rel and not aux_ent:
-                    sys.exit("TODO: Implement aux_rel and no aux_ent")
                 else:
-                    triples, obj_labels, aux_ent_stmts, aux_ent_labels, aux_rel_stmts, aux_rel_labels = batch
+                    triples, obj_labels = batch
 
                 # Standard batch data
                 _sub, _rel, _quals, _obj_labels = process_triplets(triples, obj_labels, device)
 
-                # Do same if aux ent and rel are specified
+                # Do same if aux ent specified
                 if aux_ent and len(aux_ent_stmts.shape) > 1:
                     aux_ent_dict, _aux_ent_labels = process_aux_ent(aux_ent_stmts, aux_ent_labels, max_qpairs, device)
-                if aux_rel and len(aux_rel_stmts.shape) > 1:
-                    aux_rel_dict, _aux_rel_labels = process_aux_rel(aux_rel_stmts, aux_rel_labels, device)
+
                     
                 # If no quals and aux_ent = True then dim of `aux_ent_stmts = 1`
-                if aux_ent and not aux_rel and len(aux_ent_stmts.shape) > 1:
-                    obj_preds, aux_preds, _ = model(_sub, _rel, _quals, aux_ent=aux_ent_dict)
+                if aux_ent and len(aux_ent_stmts.shape) > 1:
+                    obj_preds, aux_preds = model(_sub, _rel, _quals, aux_ent=aux_ent_dict)
                     loss = model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(aux_preds, _aux_ent_labels)
-                
-                elif aux_rel and not aux_ent and len(aux_rel_stmts.shape) > 1:
-                    obj_preds, _, aux_preds = model(_sub, _rel, _quals, aux_rel=aux_rel_dict)
-                    loss = model.loss(obj_preds, _obj_labels) + aux_weight * model.loss(aux_preds, _aux_rel_labels)
-                
-                elif aux_rel and aux_ent and len(aux_ent_stmts.shape) > 1 and len(aux_rel_stmts.shape) > 1:
-                    obj_preds, aux_ent_preds, aux_rel_preds = model(_sub, _rel, _quals, aux_ent=aux_ent_dict, aux_rel=aux_rel_dict)
-
-                    # .Take mean of aux loss so loss isn't too high
-                    a = model.loss(aux_ent_preds, _aux_ent_labels)
-                    b = model.loss(aux_rel_preds, _aux_rel_labels)
-                    loss = model.loss(obj_preds, _obj_labels) + .5 * aux_weight * (a + b)
                 else:
-                    pred, _, _ = model(_sub, _rel, _quals)
+                    pred, _ = model(_sub, _rel, _quals)
                     loss = model.loss(pred, _obj_labels)
                 
                 per_epoch_loss.append(loss.item())    
@@ -214,23 +196,3 @@ def process_aux_ent(aux_ent_stmts, aux_ent_labels, max_qpairs, device):
 
     return aux_ent_dict, _aux_ent_labels
 
-
-def process_aux_rel(aux_rel_stmts, aux_rel_labels, device):
-    """
-    Extract information from aux rel batch, convert to tensors, and place in dict
-    """
-    sub_q, rel_q, obj, rel_ix, quals_q = aux_rel_stmts[:, 0], aux_rel_stmts[:, 1], aux_rel_stmts[:, 2], aux_rel_stmts[:, 3], aux_rel_stmts[:, 4:]
-
-    aux_rel_dict = {
-        "base_sub_ix": torch.tensor(sub_q.astype(int), dtype=torch.long, device=device),
-        "base_rel_ix": torch.tensor(rel_q.astype(int), dtype=torch.long, device=device),
-        "base_obj_ix": torch.tensor(obj.astype(int), dtype=torch.long, device=device),
-        "quals": torch.tensor(quals_q.astype(int), dtype=torch.long, device=device),
-
-        # No need for +3. Handled in sampler
-        "mask": torch.tensor(rel_ix.astype(int), dtype=torch.long, device=device)
-    }
-
-    _aux_rel_labels = torch.tensor(aux_rel_labels, dtype=torch.float, device=device)
-
-    return aux_rel_dict, _aux_rel_labels

@@ -1,7 +1,4 @@
-from numpy.lib.arraypad import pad
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from models.torch_transformer import TransformerEncoderBias, TransformerEncoderLayerBias
-
 from utils.utils_gcn import *
 
 
@@ -32,12 +29,8 @@ class Transformer(nn.Module):
         self.emb_dim = params['EMBEDDING_DIM']
         self.pooling = params['MODEL']['POOLING']  # avg / concat
 
-        if params['EDGE_BIAS']:
-            encoder_layers = TransformerEncoderLayerBias(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
-            self.encoder = TransformerEncoderBias(encoder_layers, params['MODEL']['T_LAYERS'], self.num_heads, self.emb_dim, device=self.device, seq_len=params['MAX_QPAIRS'])
-        else:
-            encoder_layers = TransformerEncoderLayer(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
-            self.encoder = TransformerEncoder(encoder_layers, params['MODEL']['T_LAYERS'])
+        encoder_layers = TransformerEncoderLayer(self.emb_dim, self.num_heads, self.num_hidden, self.hid_drop)
+        self.encoder = TransformerEncoder(encoder_layers, params['MODEL']['T_LAYERS'])
 
         self.pos = nn.Embedding(num_positions, self.emb_dim)
 

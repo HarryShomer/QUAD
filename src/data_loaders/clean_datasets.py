@@ -161,6 +161,7 @@ def load_clean_wd50k(name, subtype, maxlen=43) -> Dict:
         for line in f.readlines():
             raw_trn.append(line.strip("\n").split(","))
 
+
     with open(os.path.join(DIRNAME, 'test.txt'), 'r') as f:
         raw_tst = []
         for line in f.readlines():

@@ -1,3 +1,6 @@
 notes.txt
 *.sbatch
 __pycache__/
+*.drawio
+*.pdf
+*.zip

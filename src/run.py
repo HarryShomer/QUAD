@@ -9,6 +9,7 @@ from loops.evaluation import EvaluationBenchGNNMultiClass
 from loops.evaluation import acc, mrr, mr, hits_at
 from loops.sampler import MultiClassSampler
 from loops.loops import training_loop_gcn
+from models.hyper_gcn import HypRelModel
 
 
 random.seed(42)
@@ -55,6 +56,7 @@ parser.add_argument("--lr-lambda", help="LR Decay", default=.9975, type=float)
 parser.add_argument("--dim", help="Latent dimension of entities and relations", type=int, default=200)
 parser.add_argument("--opn", help="Composition function", type=str, default="rotate")
 parser.add_argument("--label-smooth", default=.1, type=float)
+parser.add_argument("--warmup", action='store_true', default=False)
 
 parser.add_argument("--gcn-drop", help="Dropout for GCN", type=float, default=.1)
 parser.add_argument("--encoder-drop1", help="1st Dropout for encoder", default=.3, type=float)
@@ -75,33 +77,20 @@ parser.add_argument("--trans-heads", help="Transformer layersheads", type=int, d
 parser.add_argument("--mask", help="Explicit masking in transformer", action='store_true', default=False)
 
 parser.add_argument("--aux-ent", help="Include auxillary entity training task", action='store_true', default=False)
-parser.add_argument("--aux-rel", help="Include auxillary relation training task", action='store_true', default=False)
 parser.add_argument("--aux-weight", help="Weight for aux loss", type=float, default=1)
 parser.add_argument("--aux-ent-smooth", default=.1, type=float)
-parser.add_argument("--aux-rel-smooth", default=.1, type=float)
-
-parser.add_argument("--warmup", action='store_true', default=False)
-parser.add_argument("--edge-bias", action='store_true', default=False)
-parser.add_argument("--trans-post", action='store_true', default=False)
 
 parser.add_argument("--parallel", action='store_true', default=False)
 parser.add_argument("--parallel-drop", default=.3, type=float)
 
+parser.add_argument("--max-qpairs", type=int, default=15)
+
 
 cmd_args = parser.parse_args()
-
-
-if cmd_args.parallel:
-    from models.hyper_gcn_parallel import HypRelModel
-else:
-    from models.hyper_gcn import HypRelModel
-
-
-
 DEFAULT_CONFIG['MODEL'] = MODEL_CONFIG
-# DEFAULT_CONFIG['MAX_QPAIRS'] = get_max_seq_len(cmd_args.dataset.lower())
+DEFAULT_CONFIG['MAX_QPAIRS']= cmd_args.max_qpairs
+DEFAULT_CONFIG['PARALLEL'] = cmd_args.parallel
 DEFAULT_CONFIG['AUX_ENT'] = cmd_args.aux_ent
-DEFAULT_CONFIG['AUX_REL'] = cmd_args.aux_rel
 DEFAULT_CONFIG['LAMBDA'] = cmd_args.lr_lambda
 DEFAULT_CONFIG['USE_TEST'] = not cmd_args.test_on_val
 DEFAULT_CONFIG['BATCH_SIZE'] = cmd_args.batch_size
@@ -113,7 +102,6 @@ DEFAULT_CONFIG['EVAL_EVERY'] = cmd_args.val_every
 DEFAULT_CONFIG['LEARNING_RATE'] = cmd_args.lr
 DEFAULT_CONFIG['LABEL_SMOOTHING'] = cmd_args.label_smooth
 DEFAULT_CONFIG['AUX_ENT_SMOOTH'] = cmd_args.aux_ent_smooth
-DEFAULT_CONFIG['AUX_REL_SMOOTH'] = cmd_args.aux_rel_smooth
 DEFAULT_CONFIG['CLEANED_DATASET'] = cmd_args.clean_data
 DEFAULT_CONFIG['LR_SCHEDULER'] = cmd_args.lr_decay
 DEFAULT_CONFIG['EARLY_STOPPING'] = cmd_args.early_stopping
@@ -134,8 +122,6 @@ DEFAULT_CONFIG['MODEL']['SRC_MASK'] = cmd_args.mask
 DEFAULT_CONFIG['MODEL']['QUAL_COMB'] = cmd_args.qual_comb.lower()
 DEFAULT_CONFIG['MODEL']['T_LAYERS'] = cmd_args.trans_layers
 DEFAULT_CONFIG['MODEL']['T_N_HEADS'] = cmd_args.trans_heads
-DEFAULT_CONFIG['EDGE_BIAS'] = cmd_args.edge_bias
-DEFAULT_CONFIG['MODEL']['TRANS_POST'] = cmd_args.trans_post
 DEFAULT_CONFIG['MODEL']['PARALLEL_DROP'] = cmd_args.parallel_drop
 
 
@@ -163,6 +149,10 @@ def get_data(config):
             n_ents=n_entities)
     else:
         ent_excluded_from_corr = [0]
+
+    # print("Total Stmts:", len(train_data) + len(valid_data) + len(test_data))
+    # qual_stmts = [t for t in train_data + valid_data + test_data if len([i for i in t if i != 0]) > 3]
+    # print("Qual%:", len(qual_stmts) / len(train_data + valid_data + test_data) * 100)
 
     # Inverses are added here in `get_alternative_graph_repr` !!!
     # -> edge_index (2 x n) matrix with [subject_ent, object_ent] as each row.
@@ -232,9 +222,7 @@ def main():
                     lbl_smooth=config['LABEL_SMOOTHING'], 
                     bs=config['BATCH_SIZE'], 
                     aux_ent=config['AUX_ENT'], 
-                    aux_rel=config['AUX_REL'], 
                     aux_ent_smooth=config['AUX_ENT_SMOOTH'], 
-                    aux_rel_smooth=config['AUX_REL_SMOOTH'],
                     max_pairs = config['MAX_QPAIRS'] - 3 
             )
 
@@ -267,11 +255,9 @@ def main():
         "eval_every": config['EVAL_EVERY'],
         "grad_clipping": config['GRAD_CLIPPING'],
         "early_stopping": config['EARLY_STOPPING'],
-        #"scheduler": torch.optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.95) if config['LR_SCHEDULER'] else None,
         "scheduler": lr_scheduler,
         "warmup": warmup_sched,
         "aux_ent": config['AUX_ENT'],
-        "aux_rel": config['AUX_REL'],
         "aux_weight": config['AUX_WEIGHT'],
         "max_qpairs": config['MAX_QPAIRS'] - 3
     }

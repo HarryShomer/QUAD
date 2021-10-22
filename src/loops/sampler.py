@@ -20,9 +20,7 @@ class MultiClassSampler:
             lbl_smooth: float = 0.1, 
             bs: int = 64, 
             aux_ent=False, 
-            aux_rel=False, 
             aux_ent_smooth = 0.1,
-            aux_rel_smooth = 0.1,
             max_pairs = 15
         ):
 
@@ -32,9 +30,7 @@ class MultiClassSampler:
         self.n_rel = n_rel * 2  # inverse...
         self.lbl_smooth = lbl_smooth
         self.aux_ent_smooth = aux_ent_smooth
-        self.aux_rel_smooth = aux_rel_smooth
         self.aux_ent = aux_ent
-        self.aux_rel = aux_rel
         self.max_qpairs = max_pairs
 
         self.build_index()
@@ -75,29 +71,16 @@ class MultiClassSampler:
             3. self.qual_index = defaultdict
                 keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
                 vals -> List of possible [o, quals_wo_pair,  qv_ix]
-
-            4. self.rel_label_index = defaultdict (see inline comments for more details)
-                keys -> (s, r, o, qr_ix, quals). Ex: (11240, 556, 11285, 1, ****)
-                vals -> List of possible rel entities. Ex: [231, 98]
-            
-            5. self.rel_index = defaultdict
-                keys -> (s, r, quals). Ex: (11240, 556, 55, 11285, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
-                vals -> List of possible [o, qr_ix]
-
         """
         self.obj_index = defaultdict(list)
         self.qual_index = defaultdict(list)
         self.qual_label_index = defaultdict(list)
-        self.rel_index = defaultdict(list)
-        self.rel_label_index = defaultdict(list)
+
 
         for statement in self.data:
             s, r, o, quals = statement[0], statement[1], statement[2], statement[3:]
-
             self.obj_index[(s, r, *quals)].append(o)
-
-            self.rel_index[(s, r, *quals)].append([o, 1])
-            self.rel_label_index[(s, r, o, 1, *quals)].append(r)        
+     
 
             for i in range(0, len(quals), 2):
                 qr_ix, qv_ix = i, i+1
@@ -109,14 +92,7 @@ class MultiClassSampler:
 
                     self.qual_index[(s, r, *quals)].append([o, quals_wo_pair, qv_ix])
                     self.qual_label_index[(s, r, o, *quals_wo_pair)].append(quals[qv_ix])
-
-                    # Account for head, rel, tail...
-                    fixed_qr_ix = qr_ix + 3 
-
-                    # quals_wo_pair = np.array([quals[j] for j in range(len(quals)) if j not in [qr_ix, qv_ix]] + [quals[qv_ix]])
-                    self.rel_index[(s, r, *quals)].append([o, fixed_qr_ix])
-                    self.rel_label_index[(s, r, o, fixed_qr_ix, *quals)].append(quals[qr_ix])  
-
+ 
 
         # Remove duplicates in the objects list for convenience
         for k, v in self.obj_index.items():
@@ -206,46 +182,6 @@ class MultiClassSampler:
 
 
 
-    def get_rel_label(self, statements):
-        """
-        Same as `get_qual_label` but for qual entities
-        """
-        # statement shape for correct processing of the very last batch which size might be less than self.bs
-        y = np.zeros((statements.shape[0], self.n_rel), dtype=np.float32)
-
-        for i, st in enumerate(statements):
-            s, r, o, qr_ix, quals = st[0], st[1], st[2], st[3], st[4:]
-            lbls = self.rel_label_index[(s, r, o, qr_ix, *quals)]
-            y[i, lbls] = 1.0
-
-        if self.aux_rel_smooth != 0.0:
-            y = (1.0 - self.aux_rel_smooth)*y + (1.0 / self.n_rel)
-
-        return y
-
-
-    def get_rel_stmts(self, statements):
-        """
-        For a given list of object stmts get the appropriate rel statements
-
-        :param statements: array of shape (bs, seq_len) like (64, 43)
-
-        :return: list of [s, r, o, qr_ix, *quals]
-        """
-        rel_stmts = []
-
-        for stmt in statements:
-            s, r, quals = stmt[0], stmt[1], stmt[2:]
-
-            for qs in self.rel_index[tuple(stmt)]:
-                o, qr_ix = qs[0], qs[1]
-                rel_stmts.append([s, r, o, qr_ix, *quals])
-
-        rel_stmts = [list(x) for x in set(tuple(x) for x in rel_stmts)]
-
-        return np.array(rel_stmts)
-
-
     def __next__(self):
         """
         Each time, take `bs` pos
@@ -271,18 +207,11 @@ class MultiClassSampler:
             _stmts_quals = self.get_qual_stmts(_main)
             _stmt_labels = self.get_qual_label(_stmts_quals)
 
-        if self.aux_rel:
-            _stmts_rels = self.get_rel_stmts(_main)
-            _rel_labels = self.get_rel_label(_stmts_rels)
-
         # Increment Iterator
         self.i = min(self.i + self.bs, len(self.obj_keys))
 
-        if not any([self.aux_ent, self.aux_rel]):
-            return _main, _obj_labels
-        if self.aux_ent and not self.aux_rel:
+        if self.aux_ent:
             return _main, _obj_labels, _stmts_quals, _stmt_labels
-        if self.aux_rel and not self.aux_ent:
-            return _main, _obj_labels, _stmts_rels, _rel_labels
+        
+        return _main, _obj_labels
 
-        return _main, _obj_labels, _stmts_quals, _stmt_labels, _stmts_rels, _rel_labels

@@ -1,6 +1,5 @@
 import os
 import json
-import numpy as np 
 import matplotlib.pyplot as plt
 
 plt.style.use('ggplot')
@@ -16,6 +15,7 @@ def create_beta_plt(metric="MRR"):
     beta_vals = ["0", ".25", ".50", ".75", "1"]
 
     with open(os.path.join(CUR_DIR, "beta_study.json"), "r") as f:
+    # with open(os.path.join(CUR_DIR, "beta_jf17k.json"), "r") as f:
         data = json.load(f)
 
     plt.figure()
@@ -25,7 +25,7 @@ def create_beta_plt(metric="MRR"):
         # plt.plot(data['epoch'], data[metric])
         plt.plot(beta_vals, metric_vals, 'o-', label=dataset)
 
-    plt.title(f'Impact of hyperparameter Beta on test {metric}')
+    plt.title(f'Impact of hyperparameter beta on test {metric}')
     plt.xlabel('Value of Beta')
     plt.ylabel(f"Test {metric}")
     plt.legend()
