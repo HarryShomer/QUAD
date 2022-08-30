@@ -1,5 +1,5 @@
-torch
-numpy
-torch_geometric
-tqdm
-pytorch_warmup
+tqdm>=4.64.0
+torch>=1.9.0
+numpy>=1.19.12
+torch_geometric>=2.0.2
+pytorch_warmup>=0.0.4
