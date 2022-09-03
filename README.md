@@ -1,6 +1,6 @@
 # QUAD
 
-A PyTorch implementation of paper ["Learning Representations for Hyper-Relational Knowledge Graphs"]().
+A PyTorch implementation of the paper ["Learning Representations for Hyper-Relational Knowledge Graphs"](https://arxiv.org/abs/2208.14322).
 
 ## Abstract
 
@@ -44,9 +44,21 @@ bash scripts/run_wikipeople.sh
 bash scripts/wd50k_splits.sh
 ```
 
+By default the scripts try to run on cuda. To run on the cpu add the argument `--device cpu` 
+
+
 ## Acknowledgement
 
 The code is modified from the StarE codebase (https://github.com/migalkin/StarE). We sincerely thank them for their contributions.
 
 
 ## Cite
+
+```
+@article{shomer2022learning,
+  title={Learning Representations for Hyper-Relational Knowledge Graphs},
+  author={Shomer, Harry and Jin, Wei and Li, Juanhui and Ma, Yao and Tang, Jiliang},
+  journal={arXiv preprint arXiv:2208.14322},
+  year={2022}
+}
+```
