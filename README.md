@@ -29,7 +29,7 @@ cd QUAD
 pip install -r requirements.txt
 ```
 
-To reproduce the results on each dataset you can run the following bash scripts. Each scripts contains the command to replicate both the parallel and non-parallel version of the model.
+To reproduce the results on each dataset you can run the following bash scripts. Each script contains the command to replicate both the parallel and non-parallel version of the model.
 ```
 # Reproduce results on JF17K
 bash scripts/run_jf17k.sh
