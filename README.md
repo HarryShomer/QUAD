@@ -8,7 +8,7 @@ Knowledge graphs (KGs) have gained prominence for their ability to learn represe
 
 ## Requirements
 
-All experiments were conducted using python 3.8.5. 
+All experiments were conducted using python 3.8.5. Python>=3.8 is required.
 
 For the required python packages, please see `requirements.txt`.
 
